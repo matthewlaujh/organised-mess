@@ -1,0 +1,3 @@
+# Cloudflare Pages: serve the single page for the overlay route (200 rewrite, URL stays /capabilities)
+/capabilities      /index.html   200
+/capabilities/     /index.html   200
