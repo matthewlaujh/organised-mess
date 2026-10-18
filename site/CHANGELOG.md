@@ -118,3 +118,6 @@ Everything except the copy edits is a token, attribute or one-line switch in `si
 - System menu in three content-width columns of five (one column on mobile), no scrolling, so it sits low over the footer.
 - System menu: selection dot sits before the name (slot reserved so names align).
 - Cursor: listeners moved to the document in capture phase (menus and drag handles can't swallow moves), system cursor hidden on every element while the custom one is shown, hides on window blur / leaving the viewport, shows again on the next move; z-index raised above everything.
+- Lights off: a centred notice on the dark sheet from the first frame — "The studio is closed. It opens <when>, Singapore time. Click anywhere to turn the lights on." — fades on wake; the hero sits at 35% until then.
+- Lights-off notice: serif message + small sans click prompt; the opening time is converted to the visitor's clock ("02:00 tomorrow, your time" in London; plain "09:00 tomorrow" when their clock matches Singapore's).
+- Closed state: page content and pills blurred (10px) and inert, backdrop blurred too, pointer lens off; only the notice is sharp. First click/scroll/key wakes everything together over 1.4 s.

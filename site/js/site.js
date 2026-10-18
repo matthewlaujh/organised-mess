@@ -413,6 +413,33 @@
 		return '';
 	}
 	function pad(n) { return (n < 10 ? '0' : '') + n; }
+	// Singapore is UTC+8 with no daylight saving, so the next opening instant can be built directly
+	var STUDIO_UTC_OFFSET = 8;
+	function nextOpeningInstant() {
+		var now = studioNow(), base = new Date();
+		for (var i = 0; i < 8; i++) {
+			var d = (now.day + i) % 7, hrs = STUDIO_HOURS[d];
+			if (!hrs) continue;
+			if (i === 0 && now.t >= hrs[0]) continue;
+			// the Singapore calendar date i days from now
+			var parts = new Intl.DateTimeFormat('en-CA', { timeZone: STUDIO_TZ, year: 'numeric', month: '2-digit', day: '2-digit' })
+				.formatToParts(new Date(base.getTime() + i * 86400000));
+			var g = function (t) { return parseInt(parts.find(function (x) { return x.type === t; }).value, 10); };
+			return new Date(Date.UTC(g('year'), g('month') - 1, g('day'), hrs[0] - STUDIO_UTC_OFFSET, 0, 0));
+		}
+		return null;
+	}
+	// "09:00 tomorrow" in the visitor's clock; adds "your time" when that differs from Singapore's
+	function nextOpeningLocal() {
+		var at = nextOpeningInstant();
+		if (!at) return '';
+		var time = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', hour12: false }).format(at).replace(/^24/, '00');
+		var dayKey = function (d) { return d.getFullYear() * 1000 + d.getMonth() * 40 + d.getDate(); };
+		var today = new Date(), tomorrow = new Date(today.getTime() + 86400000);
+		var when = dayKey(at) === dayKey(today) ? 'today' : dayKey(at) === dayKey(tomorrow) ? 'tomorrow' : 'on ' + DAY_NAMES[at.getDay()];
+		var sameClock = -new Date().getTimezoneOffset() === STUDIO_UTC_OFFSET * 60;
+		return time + ' ' + when + (sameClock ? '' : ', your time');
+	}
 
 	function tickClock() {
 		var el = document.querySelector('.studio-status');
@@ -458,16 +485,24 @@
 
 		html.classList.add('lights-off');
 		var inst = window.Backdrop && window.Backdrop.instances[0];
-		if (inst) inst.setSpeedScale(0.35);
+		if (inst) { inst.setSpeedScale(0.35); inst.settings.mouse_interaction = false; }   // no lens while closed
 		var hint = document.querySelector('.studio-hint');
 		if (hint) hint.hidden = false;
+		// say so in the middle of the dark sheet, immediately — otherwise it reads as a broken page
+		var notice = document.querySelector('.lights-notice');
+		if (notice) {
+			var when = nextOpening(now);   // "tomorrow at 09:00" / "on Monday at 09:00"
+			notice.querySelector('.lights-when').textContent = nextOpeningLocal();
+			notice.hidden = false;
+		}
 
 		var events = ['pointerdown', 'keydown', 'wheel', 'touchstart', 'scroll'];
 		function wake() {
 			events.forEach(function (ev) { window.removeEventListener(ev, wake); });
 			html.classList.add('lights-waking');
 			html.classList.remove('lights-off');
-			if (inst) inst.setSpeedScale(1);
+			if (notice) setTimeout(function () { notice.hidden = true; }, 1000);
+			if (inst) { inst.setSpeedScale(1); inst.settings.mouse_interaction = true; }
 			if (hint) hint.hidden = true;
 			try { sessionStorage.setItem('om-lights', 'on'); } catch (e) {}
 			setTimeout(function () { html.classList.remove('lights-waking'); }, 1600);

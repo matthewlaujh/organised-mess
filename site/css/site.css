@@ -667,6 +667,27 @@ html.lights-off .pill::after { background: linear-gradient(180deg, rgba(255, 255
 html.lights-off a.pill:hover { background: rgba(255, 255, 255, 0.12); }
 html.lights-off .page-capabilities .page-content { box-shadow: 0 0 5rem 0 rgba(0, 0, 0, 0.6); }
 
+/* the notice: explains the dark sheet the moment it appears, no reveal delay */
+.lights-notice {
+	position: fixed; left: 50%; top: 62%; transform: translate(-50%, -50%);
+	z-index: 399; margin: 0; padding: 0 var(--page-pad);
+	display: flex; flex-direction: column; align-items: center; gap: 0.15em;
+	max-width: 36em; text-align: center; pointer-events: none; text-wrap: balance;
+	font-family: var(--serif); font-weight: 300; font-size: var(--t-xl); line-height: 1.2;
+	color: var(--ink);
+	opacity: 1; transition: opacity 0.9s var(--ease-out);
+}
+.lights-notice[hidden] { display: none; }
+.lights-notice .lights-cta { font-family: var(--sans); font-weight: 200; font-size: 0.6em; color: var(--muted); margin-top: 0.7em; }
+html.lights-waking .lights-notice { opacity: 0; }
+/* closed: the page is blurred and inert; only the notice is sharp. Everything wakes together on the first click. */
+html.lights-off .page-home .page-content, html.lights-off .bar { filter: blur(10px); opacity: 0.45; pointer-events: none; }
+html.lights-off .bar > * { pointer-events: none; }
+html.lights-off .page-home .page-content, html.lights-waking .page-home .page-content,
+html.lights-off .bar, html.lights-waking .bar { transition: filter 1.4s var(--ease-out), opacity 1.4s var(--ease-out); }
+html.lights-off .backdrop-canvas { filter: brightness(0.22) contrast(1.15) blur(6px); }
+.mobile .lights-notice { font-size: var(--t-m); }
+
 html.lights-off body, html.lights-waking body,
 html.lights-off .page-capabilities, html.lights-waking .page-capabilities,
 html.lights-off .page-capabilities .page-content, html.lights-waking .page-capabilities .page-content,

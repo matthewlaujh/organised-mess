@@ -1,0 +1,10 @@
+{
+	// Cloudflare Workers — static site served from ./site (no Worker code).
+	// _headers and _redirects inside site/ are honoured.
+	"name": "organised-mess-web",
+	"compatibility_date": "2026-10-01",
+	"assets": {
+		"directory": "./site",
+		"not_found_handling": "404-page"
+	}
+}
