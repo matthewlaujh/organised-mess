@@ -121,3 +121,13 @@ Everything except the copy edits is a token, attribute or one-line switch in `si
 - Lights off: a centred notice on the dark sheet from the first frame — "The studio is closed. It opens <when>, Singapore time. Click anywhere to turn the lights on." — fades on wake; the hero sits at 35% until then.
 - Lights-off notice: serif message + small sans click prompt; the opening time is converted to the visitor's clock ("02:00 tomorrow, your time" in London; plain "09:00 tomorrow" when their clock matches Singapore's).
 - Closed state: page content and pills blurred (10px) and inert, backdrop blurred too, pointer lens off; only the notice is sharp. First click/scroll/key wakes everything together over 1.4 s.
+
+## QA pass 1
+- Type floors: rem scales with the viewport (1rem ≈ 10px on phones), so chrome and panel text could hit 6–9px. Pills ≥ 12px (13 on mobile), pill height ≥ 34px on touch, title bar ≥ 12px, `--t-xs/m/l` floors (10/13/16px; 11/15/18 on mobile), system menu ≥ 13px, lights notice ≥ 20px.
+- Mobile footer: © pill back as a second row; status text compact ("Closed · 01:00 tomorrow"); `minmax(0,1fr)` so it never pushes the system pill out. Window height now uses the measured `--footer-height`, so it clears the two-row footer and short laptop windows.
+- Status pill shows the next opening in the visitor's clock, matching the notice. "click to turn the lights on" hint removed (the notice says it).
+- Reduced motion: reveals, blur-ins and window animations disabled with content shown immediately (rows were stuck invisible before).
+- No WebGL: CSS gradient sheet, system pill reads "Static" and is disabled.
+- favicon.ico 291KB → 697B (16+32); apple-touch-icon and icon-512 added; theme-color.
+- 404.html for unknown paths (Workers `not_found_handling: 404-page`).
+- Copy: "About us" (sentence case like the other rows), Oxford commas made consistent with the hero, "hardware development" repetition removed from Systems & Prototyping.

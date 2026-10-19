@@ -447,9 +447,10 @@
 		var now = studioNow();
 		var hrs = STUDIO_HOURS[now.day];
 		var isOpen = !!hrs && now.t >= hrs[0] && now.t < hrs[1];
+		var compact = html.classList.contains('mobile');
 		var status = isOpen
-			? 'Studio open · Singapore'
-			: 'Studio closed · opens ' + nextOpening(now).replace(' at ', ' ');
+			? (compact ? 'Open · Singapore' : 'Studio open · Singapore')
+			: (compact ? 'Closed · ' : 'Studio closed · opens ') + nextOpeningLocal().replace(', your time', '');   // visitor's clock, like the notice
 		el.querySelector('.studio-state').textContent = status;
 		el.classList.toggle('is-open', isOpen);
 
@@ -486,8 +487,6 @@
 		html.classList.add('lights-off');
 		var inst = window.Backdrop && window.Backdrop.instances[0];
 		if (inst) { inst.setSpeedScale(0.35); inst.settings.mouse_interaction = false; }   // no lens while closed
-		var hint = document.querySelector('.studio-hint');
-		if (hint) hint.hidden = false;
 		// say so in the middle of the dark sheet, immediately — otherwise it reads as a broken page
 		var notice = document.querySelector('.lights-notice');
 		if (notice) {
@@ -503,7 +502,6 @@
 			html.classList.remove('lights-off');
 			if (notice) setTimeout(function () { notice.hidden = true; }, 1000);
 			if (inst) { inst.setSpeedScale(1); inst.settings.mouse_interaction = true; }
-			if (hint) hint.hidden = true;
 			try { sessionStorage.setItem('om-lights', 'on'); } catch (e) {}
 			setTimeout(function () { html.classList.remove('lights-waking'); }, 1600);
 		}
@@ -571,8 +569,10 @@
 		var btn = pill.querySelector('.system-btn'), menu = pill.querySelector('.system-menu'), nameEl = pill.querySelector('.system-name');
 		var inst = function () { return window.Backdrop.instances[0]; };
 		function render() {
-			var cur = inst() ? inst().mode : '';
-			nameEl.textContent = window.Backdrop.names[cur] || cur || '—';
+			if (!inst()) { nameEl.textContent = 'Static'; btn.disabled = true; document.documentElement.classList.add('no-webgl'); return; }
+			document.documentElement.classList.remove('no-webgl'); btn.disabled = false;
+			var cur = inst().mode;
+			nameEl.textContent = window.Backdrop.names[cur] || cur;
 			menu.innerHTML = '';
 			window.Backdrop.modes.forEach(function (m) {
 				var li = document.createElement('li');
@@ -609,5 +609,6 @@
 		});
 		// the backdrop may only be ready after this script; retry once it is
 		if (!inst()) setTimeout(render, 300);
+		if (!inst()) setTimeout(render, 1500);
 	})();
 })();
