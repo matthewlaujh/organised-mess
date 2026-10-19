@@ -131,3 +131,4 @@ Everything except the copy edits is a token, attribute or one-line switch in `si
 - favicon.ico 291KB → 697B (16+32); apple-touch-icon and icon-512 added; theme-color.
 - 404.html for unknown paths (Workers `not_found_handling: 404-page`).
 - Copy: "About us" (sentence case like the other rows), Oxford commas made consistent with the hero, "hardware development" repetition removed from Systems & Prototyping.
+- Footer: desktop status · system · ©; mobile row 1 status | system, row 2 © flush left. © pill in the sans like the others. Section numbers sit on the label baseline at 0.62× the label size.
