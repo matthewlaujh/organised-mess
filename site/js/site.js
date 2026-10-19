@@ -374,9 +374,21 @@
 			var capsWin = windowify(capsPanel, 'Capabilities', { cls: 'os-win-caps', meta: 'Index (3)', onClose: function () { closeOverlay(true, true); } });
 			// reset drag offset each time it opens
 			overlay.addEventListener('transitionend', function () {}, { once: true });
-			var origOpen = openOverlay;
-			openOverlay = function (a, b) { capsWin.style.transform = ''; origOpen(a, b); };
-			open = openOverlay;
+			capsWin.setAttribute('tabindex', '-1');
+			var origOpen = openOverlay, origClose = closeOverlay, opener = null;
+			openOverlay = function (a, b) {
+				capsWin.style.transform = '';
+				opener = document.activeElement;
+				origOpen(a, b);
+				// keyboard: focus lands in the window so Tab moves through its links; Escape still closes
+				setTimeout(function () { if (!overlay.hidden) capsWin.focus({ preventScroll: true }); }, 60);
+			};
+			closeOverlay = function (a, b) {
+				origClose(a, b);
+				if (opener && opener.focus && document.contains(opener)) opener.focus({ preventScroll: true });
+				opener = null;
+			};
+			open = openOverlay; close = closeOverlay;
 		}
 	}
 

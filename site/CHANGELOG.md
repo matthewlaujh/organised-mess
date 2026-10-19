@@ -132,3 +132,9 @@ Everything except the copy edits is a token, attribute or one-line switch in `si
 - 404.html for unknown paths (Workers `not_found_handling: 404-page`).
 - Copy: "About us" (sentence case like the other rows), Oxford commas made consistent with the hero, "hardware development" repetition removed from Systems & Prototyping.
 - Footer: desktop status · system · ©; mobile row 1 status | system, row 2 © flush left. © pill in the sans like the others. Section numbers sit on the label baseline at 0.62× the label size.
+
+## QA pass 2
+- System menu never taller than the viewport: on mobile it scrolls as a last resort, and short-but-wide screens (landscape phones) get 2 or 3 columns.
+- Keyboard: opening Capabilities moves focus into the window (Tab walks its links), closing returns focus to the link that opened it.
+- Closed state on phones fades the hero further so the notice sits on a clean sheet.
+- Verified: 11 breakpoints, open/close every way, back/forward, resize while open, drag reset, rapid system switching, touch wake, no-WebGL, reduced motion, context loss, 60 s soak (flat heap, no GL errors), open/close spam + switch storm + resize storm, 404 page, production headers/compression/routing.
