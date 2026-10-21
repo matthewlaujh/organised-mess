@@ -105,10 +105,11 @@
 			'  vec4 s = sim(w) * 0.2;',
 			'  s += (sim(w + vec2(e.x, 0.0)) + sim(w - vec2(e.x, 0.0)) + sim(w + vec2(0.0, e.y)) + sim(w - vec2(0.0, e.y))) * 0.125;',
 			'  s += (sim(w + e) + sim(w - e) + sim(w + vec2(e.x, -e.y)) + sim(w - vec2(e.x, -e.y))) * 0.075;',
-			// pads draw as rings: the pad channel dilated one cell, with the centre cell left open
-			'  if (uRing > 0.5) { float ring = 0.0; float c0 = sim(w).a;',
-			'    for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) { if (x == 0 && y == 0) continue; ring = max(ring, sim(w + vec2(float(x), float(y)) * uCell).a * (x * x + y * y > 1 ? 0.55 : 1.0)); }',
-			'    s.r = max(s.r, ring * (1.0 - c0 * 0.85)); }',
+			// pads draw as round rings: an annulus around the centre of any pad cell within one cell of here
+			'  if (uRing > 0.5) { float ring = 0.0; vec2 cc = floor(w / uCell) + 0.5;',
+			'    for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) { vec2 o = vec2(float(x), float(y)); float c = sim(w + o * uCell).a; if (c < 0.01) continue;',
+			'      float d = length(w / uCell - (cc + o)); ring = max(ring, c * smoothstep(1.6, 1.15, d) * smoothstep(0.5, 0.85, d)); }',
+			'    s.r = max(s.r * (1.0 - ring), ring); }',
 			'  float pat = clamp(' + pat + ', 0.0, 1.0);',
 			'  float base = smoothstep(-0.1, 1.05, 1.0 - uv.y) * 0.75 + 0.05;',
 			'  float liquid = (wb.y - 0.5) * 0.14;',
@@ -431,7 +432,7 @@
 
 	/* ---- Router: our own system. An autorouter that never finishes. --------------
 	   Float texture, per layer a pair of channels: (type + age, dir + travel)
-	     type 0 empty · 1 trace · 2 pad · 3 via · 4 head · 5 IC keepout · 6 IC outline · 7 IC pin
+	     type 0 empty · 1 trace · 2 pad · 3 via · 4 head · 5 keep-out (array gaps) · 7 array pad
 	   age 0..1 (then the cell lifts off)
 	     dir 0..7 (E, NE, N, NW, W, SW, S, SE)                    travel 0..1 (head length so far)
 	   Layer 0 lives in RG; layer 1 (uLayers) in BA; the signal variant uses B for the pulse. */
@@ -464,7 +465,7 @@
 		'    if (x * x <= 1 && y * y <= 1 && dot(d, dv) < 0.01) continue;',   // immediate sides are allowed only at radius 2
 		'    if (typ(Lr(at + d, L)) > 0.5) return false;',
 		'  } return true; }',
-		// ICs: each block of the board may hold one footprint per epoch — a hollow outline with pins on its long sides.
+		// Pad arrays: each block of the board may hold one per epoch — a grid of rings that traces fan out from.
 		// Geometry and timing are hashed from the block id, so every cell can tell on its own whether it is part of one.
 		'vec3 icAt(vec2 id, int L){',
 		'  if (uIc <= 0.0) return vec3(0.0);',
@@ -472,17 +473,18 @@
 		'  float E = 0.9 / uAgeRate; float u = (uGen + hashi(b, 71.0 + salt) * E) / E; float e = floor(u); float age = fract(u);',
 		'  if (age > 0.97 || hashi(b, 80.0 + salt + e * 0.37) > uIc) return vec3(0.0);',
 		'  bool vert = hashi(b, 83.0 + salt + e * 0.41) < 0.5;',
-		'  float sw = 7.0 + floor(hashi(b, 85.0 + salt + e * 0.43) * 5.0), lg = 14.0 + floor(hashi(b, 87.0 + salt + e * 0.47) * 13.0);',
-		'  vec2 dim = vert ? vec2(sw, lg) : vec2(lg, sw);',
+		// a pad array: cols × rows of rings at a 4-cell pitch; the cells between them are keep-out
+		'  float cols = 1.0 + floor(hashi(b, 85.0 + salt + e * 0.43) * 3.0), rows = 3.0 + floor(hashi(b, 87.0 + salt + e * 0.47) * 6.0);',
+		'  vec2 n = vert ? vec2(cols, rows) : vec2(rows, cols); vec2 dim = (n - 1.0) * 4.0 + 1.0;',
 		'  vec2 p0 = floor(vec2(4.0) + vec2(hashi(b, 89.0 + salt + e * 0.53), hashi(b, 91.0 + salt + e * 0.59)) * (BS - 8.0 - dim));',
 		'  vec2 l = id - b * BS - p0;',
-		'  if (l.x >= 0.0 && l.y >= 0.0 && l.x < dim.x && l.y < dim.y) {',
-		'    bool edge = l.x < 0.5 || l.y < 0.5 || l.x > dim.x - 1.5 || l.y > dim.y - 1.5;',
-		'    return vec3(edge ? 6.0 : 5.0, age, 0.0);',
-		'  }',
-		// pins: one cell outside each long side, every other cell, pointing outward
-		'  if (vert) { if (l.y >= 1.0 && l.y <= dim.y - 2.0 && mod(l.y - 1.0, 3.0) < 0.5) { if (l.x == -1.0) return vec3(7.0, age, 4.0); if (l.x == dim.x) return vec3(7.0, age, 0.0); } }',
-		'  else { if (l.x >= 1.0 && l.x <= dim.x - 2.0 && mod(l.x - 1.0, 3.0) < 0.5) { if (l.y == -1.0) return vec3(7.0, age, 6.0); if (l.y == dim.y) return vec3(7.0, age, 2.0); } }',
+		'  if (l.x < 0.0 || l.y < 0.0 || l.x >= dim.x || l.y >= dim.y) return vec3(0.0);',
+		'  if (mod(l.x, 4.0) > 0.5 || mod(l.y, 4.0) > 0.5) return vec3(5.0, age, 0.0);',
+		// outer pads point away from the array (a single row alternates sides); inner pads just sit there
+		'  float d = 8.0;',
+		'  if (vert) { if (n.x < 1.5) d = mod(l.y / 4.0, 2.0) < 0.5 ? 4.0 : 0.0; else if (l.x < 0.5) d = 4.0; else if (l.x > dim.x - 1.5) d = 0.0; }',
+		'  else { if (n.y < 1.5) d = mod(l.x / 4.0, 2.0) < 0.5 ? 6.0 : 2.0; else if (l.y < 0.5) d = 6.0; else if (l.y > dim.y - 1.5) d = 2.0; }',
+		'  return vec3(7.0, age, d);',
 		'  return vec3(0.0);',
 		'}',
 		'vec2 route(int L){',
@@ -521,9 +523,9 @@
 		'  for (int j = 0; j < 4; j++) { int k = j * 2;',
 		'    vec2 o = OFF(k); vec2 n = Lr(o, L);',
 		'    if (typ(n) > 1.5 && typ(n) < 2.5 && ageOf(n) < 0.0001 && clear8(vec2(0.0), o, L) && hashi(id, salt + 9.0) < 0.6) return vec2(4.0, mod(float(k) + 4.0, 8.0));',
-		// a fresh IC pin pointing at me sends a head out (most pins, not all)
+		// an array pad pointing at me sends a head out once, at its own moment early in the array's life
 		'    if (typ(n) > 6.5 && dirOf(n) == int(mod(float(k) + 4.0, 8.0))) { float dl = hashi(id, salt + 11.0) * 0.45, ag = ageOf(n), st = uAgeRate / 0.9;',
-		'      if (ag >= dl && ag < dl + st && hashi(id, salt + 12.0) < 0.55) return vec2(4.0, float(dirOf(n)) + 0.1 + hashi(id, salt + 13.0) * 0.6); }',
+		'      if (ag >= dl && ag < dl + st && hashi(id, salt + 12.0) < 0.45) return vec2(4.0, float(dirOf(n)) + 0.1 + hashi(id, salt + 13.0) * 0.6); }',
 		'  }',
 		// a new pad, in open space
 		// pads cluster: a slow drifting field decides where the board is busy and where it is open copper
@@ -548,10 +550,10 @@
 	].join('\n');
 	// raw texel → ink (layer 0, layer 1, pulse): pads and vias bold, traces lighter, everything fading with age
 	function routerInk(layers, signal) {
-		// weight by type: trace/head 0.7 · pad/via/outline/pin 1.0 · IC body 0.42 (a half-tone slab)
-		return 'float wt(float t){ return t < 0.5 ? 0.0 : (t > 4.5 && t < 5.5) ? 0.42 : (t > 1.5 && t < 3.5 || t > 5.5) ? 1.0 : 0.7; }'
-			+ 'vec4 ink(vec4 c){ float t0 = floor(c.r + 0.001), a0 = c.r - t0; float f0 = 1.0 - a0 * a0; float i0 = wt(t0) * f0; float pd = (t0 > 1.5 && t0 < 2.5) ? f0 : 0.0;'
-			+ (layers ? ' float t1 = floor(c.b + 0.001), a1 = c.b - t1; float f1 = 1.0 - a1 * a1; float i1 = wt(t1) * f1; pd = max(pd, (t1 > 1.5 && t1 < 2.5) ? f1 * 0.6 : 0.0);' : ' float i1 = 0.0;')
+		// weight by type: trace/head 0.7 · pad/via/array pad 1.0 · keep-out 0 (blocks routing, draws nothing)
+		return 'float wt(float t){ return t < 0.5 ? 0.0 : (t > 4.5 && t < 5.5) ? 0.0 : (t > 1.5 && t < 3.5 || t > 5.5) ? 1.0 : 0.7; }'
+			+ 'vec4 ink(vec4 c){ float t0 = floor(c.r + 0.001), a0 = c.r - t0; float f0 = 1.0 - a0 * a0; float i0 = wt(t0) * f0; float pd = (t0 > 1.5 && t0 < 2.5 || t0 > 6.5) ? f0 : 0.0;'
+			+ (layers ? ' float t1 = floor(c.b + 0.001), a1 = c.b - t1; float f1 = 1.0 - a1 * a1; float i1 = wt(t1) * f1; pd = max(pd, (t1 > 1.5 && t1 < 2.5 || t1 > 6.5) ? f1 * 0.6 : 0.0);' : ' float i1 = 0.0;')
 			+ (signal ? ' float pu = c.b;' : ' float pu = 0.0;')
 			+ ' return vec4(i0, i1, pu, pd); }';
 	}
