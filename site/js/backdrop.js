@@ -87,13 +87,14 @@
 	/* ---- display: the state texture seen through liquid ------------------ */
 	// each system supplies PAT: a GLSL expression turning the softened sample `s`
 	// (vec4) into ink density 0..1
-	function showShader(pat) {
+	function showShader(pat, rawink) {
 		return [
 			'precision highp float; varying vec2 vUv; uniform vec2 uRes; uniform float uTime; uniform vec2 uMouse; uniform float uEnergy;',
-			'uniform sampler2D uState; uniform sampler2D uPrev; uniform float uMix; uniform float uWarp; uniform vec2 uSoft; uniform float uInk; uniform float uInvert; uniform float uLens; uniform float uLensOn; uniform float uFlip; uniform sampler2D uWarpA; uniform sampler2D uWarpB;',
+			'uniform sampler2D uState; uniform sampler2D uPrev; uniform float uMix; uniform float uWarp; uniform vec2 uSoft; uniform float uInk; uniform float uInvert; uniform float uLens; uniform float uLensOn; uniform float uFlip; uniform float uMinC; uniform sampler2D uWarpA; uniform sampler2D uWarpB;',
 			NOISE, FINISH,
 			// current and previous generation, crossfaded so steps never pop
-			'vec4 sim(vec2 w){ return mix(texture2D(uPrev, w), texture2D(uState, w), uMix); }',
+			rawink || 'vec4 ink(vec4 c){ return c; }',
+			'vec4 sim(vec2 w){ return mix(ink(texture2D(uPrev, w)), ink(texture2D(uState, w)), uMix); }',
 			'void main(){',
 			'  vec2 uv = vUv; float aspect = uRes.x / uRes.y;',
 			'  vec4 wa = texture2D(uWarpA, uv); vec4 wb = texture2D(uWarpB, uv);',
@@ -111,7 +112,10 @@
 			'  float pools = wb.x;',
 			'  float sheet = uInvert > 0.5 ? mix(0.12, 0.78, pools) + liquid * 0.5 : base + liquid;',
 			// invert: where the organism sits, the sheet flips (dark on the light half, light on the dark half)
-			'  float shade = uInvert > 0.5 ? mix(sheet, 1.0 - sheet, pat) : sheet + pat * uInk;',
+			// thin marks (traces) need a floor on contrast where the sheet is mid-grey, else they vanish in the pools
+			'  float inv = 1.0 - sheet; float gap = abs(inv - sheet);',
+			'  if (gap < uMinC) inv = clamp(sheet + (sheet < 0.5 ? 1.0 : -1.0) * uMinC, 0.0, 1.0);',
+			'  float shade = uInvert > 0.5 ? mix(sheet, inv, pat) : sheet + pat * uInk;',
 			// pointer lens: a soft blob that inverts what is under it, its edge pulled by the liquid
 			'  vec2 lp = (uv - uMouse) * vec2(aspect, 1.0) + (r - 0.5) * 0.6 * uLens;',
 			'  float rad = uLens * (0.75 + 0.5 * wb.z);',
@@ -413,17 +417,131 @@
 		'}'
 	].join('\n');
 
-	function coverageShader(pat) {
+	function coverageShader(pat, rawink) {
 		return ['precision highp float; varying vec2 vUv; uniform sampler2D uState; uniform vec2 uSoft;',
-			'vec4 sim(vec2 w){ return texture2D(uState, w); }',
+			rawink || 'vec4 ink(vec4 c){ return c; }',
+			'vec4 sim(vec2 w){ return ink(texture2D(uState, w)); }',
 			'void main(){ vec4 s = sim(vUv); float pat = clamp(' + pat + ', 0.0, 1.0); gl_FragColor = vec4(pat, 0.0, 0.0, 1.0); }'].join('\n');
+	}
+
+
+	/* ---- Router: our own system. An autorouter that never finishes. --------------
+	   Float texture, per layer a pair of channels: (type + age, dir + travel)
+	     type 0 empty · 1 trace · 2 pad · 3 via · 4 head        age 0..1 (then the cell lifts off)
+	     dir 0..7 (E, NE, N, NW, W, SW, S, SE)                    travel 0..1 (head length so far)
+	   Layer 0 lives in RG; layer 1 (uLayers) in BA; the signal variant uses B for the pulse. */
+	var STEP_ROUTER = STEP_HEAD + [
+		'uniform float uGen; uniform float uOrtho; uniform float uSignal; uniform float uLayers; uniform float uSpawn; uniform float uAgeRate; uniform float uTurn; uniform float uMaxLen;',
+		// a hash for integer cell ids that stays uniform down to 1e-5 (every intermediate stays small, so fract() keeps its precision)
+		'float hashi(vec2 id, float k){',
+		'  float a = fract(id.x * 0.1031 + 0.17), b = fract(id.y * 0.1031 + 0.31), c = fract(k * 0.0137 + 0.59);',
+		'  for (int i = 0; i < 4; i++) { a = fract((a + b) * (c + 1.3) * 1.7 + 0.5); b = fract((b + c) * (a + 1.1) * 2.3 + 0.2); c = fract((c + a) * (b + 1.9) * 1.3 + 0.7); }',
+		'  return a; }',
+		'vec2 OFF(int k){ if (k == 0) return vec2(1.0, 0.0); if (k == 1) return vec2(1.0, 1.0); if (k == 2) return vec2(0.0, 1.0); if (k == 3) return vec2(-1.0, 1.0); if (k == 4) return vec2(-1.0, 0.0); if (k == 5) return vec2(-1.0, -1.0); if (k == 6) return vec2(0.0, -1.0); return vec2(1.0, -1.0); }',
+		'vec2 Lr(vec2 o, int L){ vec4 c = S(o); return L == 0 ? c.rg : c.ba; }',
+		'float typ(vec2 v){ return floor(v.x + 0.001); }',
+		'float ageOf(vec2 v){ return v.x - floor(v.x + 0.001); }',
+		'int dirOf(vec2 v){ return int(floor(v.y + 0.001)); }',
+		'float travOf(vec2 v){ return v.y - floor(v.y + 0.001); }',
+		// every cell around `at` (relative to me) is empty on this layer, ignoring `except`
+		'bool clear8(vec2 at, vec2 except, int L){',
+		'  for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {',
+		'    if (x == 0 && y == 0) continue; vec2 o = at + vec2(float(x), float(y));',
+		'    if (abs(o.x - except.x) < 0.5 && abs(o.y - except.y) < 0.5) continue;',
+		'    if (typ(Lr(o, L)) > 0.5) return false;',
+		'  } return true; }',
+		'bool clear2(int L){ for (int y = -2; y <= 2; y++) for (int x = -2; x <= 2; x++) { if (typ(Lr(vec2(float(x), float(y)), L)) > 0.5) return false; } return true; }',
+		// room ahead and to the sides of `at` when travelling in direction `dv` (the trail behind is ours)
+		'bool clearFwd(vec2 at, vec2 dv, int L){',
+		'  for (int y = -2; y <= 2; y++) for (int x = -2; x <= 2; x++) {',
+		'    vec2 d = vec2(float(x), float(y)); if (x == 0 && y == 0) continue;',
+		'    if (dot(d, dv) < -0.01) continue;',
+		'    if (x * x <= 1 && y * y <= 1 && dot(d, dv) < 0.01) continue;',   // immediate sides are allowed only at radius 2
+		'    if (typ(Lr(at + d, L)) > 0.5) return false;',
+		'  } return true; }',
+		'vec2 route(int L){',
+		'  vec2 me = Lr(vec2(0.0), L); float t = typ(me);',
+		'  vec2 id = floor(vUv / uTexel); float salt = float(L) * 17.0;',
+		'  if (t > 3.5) {',                                   // head: advance or terminate
+		'    int d = dirOf(me); vec2 o = OFF(d); float tr = travOf(me);',
+		'    if (tr >= 0.95) return vec2(3.0, float(d));',
+		'    if (typ(Lr(o, L)) < 0.5 && clearFwd(o, o, L)) return vec2(1.0, float(d));',
+		// blocked: jog around it (try the two neighbouring directions, random order); give up only when both are blocked
+		'    float stp = uOrtho > 0.5 ? 2.0 : 1.0; float sgn = hashi(id, salt + uGen * 0.53) < 0.5 ? 1.0 : -1.0;',
+		'    for (int i = 0; i < 2; i++) {',
+		'      int nd = int(mod(float(d) + sgn * stp + 8.0, 8.0)); vec2 no = OFF(nd);',
+		'      if (typ(Lr(no, L)) < 0.5 && clearFwd(no, no, L)) return vec2(4.0, float(nd) + tr + 0.02);',
+		'      sgn = -sgn;',
+		'    }',
+		'    return vec2(3.0, float(d));',
+		'  }',
+		'  if (t > 0.5) {',                                   // trace / pad / via: age, then lift off
+		'    float a = ageOf(me) + uAgeRate * (0.6 + 0.8 * hashi(floor(id / 6.0), salt));',
+		'    if (a > 0.97) return vec2(0.0);',
+		'    return vec2(t + a, me.y);',
+		'  }',
+		// empty: a head arriving?
+		'  for (int k = 0; k < 8; k++) {',
+		'    vec2 o = OFF(k); vec2 n = Lr(o, L);',
+		'    if (typ(n) > 3.5) { int nd = dirOf(n); vec2 no = OFF(nd);',
+		'      if (abs(no.x + o.x) < 0.5 && abs(no.y + o.y) < 0.5 && travOf(n) < 0.95 && clearFwd(vec2(0.0), no, L)) {',
+		'        float h = hashi(id, salt + uGen * 0.37); float stp = uOrtho > 0.5 ? 2.0 : 1.0; float d = float(nd);',
+		'        if (h < uTurn) d = mod(d + stp, 8.0); else if (h < 2.0 * uTurn) d = mod(d - stp + 8.0, 8.0);',
+		'        return vec2(4.0, d + min(0.94, travOf(n) + 1.0 / uMaxLen));',
+		'      } }',
+		'  }',
+		// a pad that just appeared beside me sends a head out
+		'  for (int j = 0; j < 4; j++) { int k = j * 2;',
+		'    vec2 o = OFF(k); vec2 n = Lr(o, L);',
+		'    if (typ(n) > 1.5 && typ(n) < 2.5 && ageOf(n) < 0.0001 && clear8(vec2(0.0), o, L) && hashi(id, salt + 9.0) < 0.6) return vec2(4.0, mod(float(k) + 4.0, 8.0));',
+		'  }',
+		// a new pad, in open space
+		// pads cluster: a slow drifting field decides where the board is busy and where it is open copper
+		'  float region = smoothstep(0.45, 0.72, fbm(id * 0.028 + salt + uGen * 0.00015));',
+		'  float sp = (uSeed > 0.0 ? uSpawn * 150.0 : uSpawn) * (0.04 + 2.2 * region);',
+		'  if (hashi(id, salt + 3.0 + uGen * 0.11) < sp && clear2(L)) return vec2(2.0, 0.0);',
+		'  return vec2(0.0);',
+		'}',
+		'void main(){',
+		'  vec2 r0 = route(0);',
+		'  vec2 r1 = vec2(0.0);',
+		'  if (uLayers > 0.5) r1 = route(1);',
+		'  else if (uSignal > 0.5) {',
+		// pulse: born at pads on a slow clock, runs forward along each trace, dies at the via
+		'    vec4 me = S(vec2(0.0)); float t = typ(me.rg); float pulse = me.b * 0.86;',
+		'    if (t > 0.5 && t < 1.5 || t > 2.5 && t < 3.5) { vec2 behind = -OFF(dirOf(me.rg)); vec4 b = S(behind); if (typ(b.rg) > 0.5 && b.b > 0.55) pulse = 1.0; }',
+		'    if (t > 1.5 && t < 2.5 && mod(uGen, 50.0) < 1.0 && hashi(floor(vUv / uTexel), floor(uGen / 50.0)) < 0.35) pulse = 1.0;',
+		'    r1 = vec2(pulse, 0.0);',
+		'  }',
+		'  gl_FragColor = vec4(r0, r1);',
+		'}'
+	].join('\n');
+	// raw texel → ink (layer 0, layer 1, pulse): pads and vias bold, traces lighter, everything fading with age
+	function routerInk(layers, signal) {
+		return 'vec4 ink(vec4 c){ float t0 = floor(c.r + 0.001), a0 = c.r - t0; float i0 = t0 > 0.5 ? ((t0 > 1.5 && t0 < 3.5) ? 1.0 : 0.78) * (1.0 - a0 * a0) : 0.0;'
+			+ (layers ? ' float t1 = floor(c.b + 0.001), a1 = c.b - t1; float i1 = t1 > 0.5 ? ((t1 > 1.5 && t1 < 3.5) ? 1.0 : 0.78) * (1.0 - a1 * a1) : 0.0;' : ' float i1 = 0.0;')
+			+ (signal ? ' float pu = c.b;' : ' float pu = 0.0;')
+			+ ' return vec4(i0, i1, pu, 0.0); }';
 	}
 
 	/* ---- registry ------------------------------------------------------------ */
 	// res: sim width = stage width / res (rounded to a power of two, capped)
 	// tick: seconds per generation; steps: generations per tick; warm: steps before first frame
 	// soft: soften radius in sim texels; pat: GLSL from sample s → ink
-	var SYSTEMS = {
+	var ROUTER = function (o) {
+		return Object.assign({ step: STEP_ROUTER, float: true, nearest: true, res: 5, cap: 384, tick: 1 / 30, steps: 1, warm: 30, soft: 0.45, ink: 0.72, full: 0.5, warp: 0.35, minc: 0.5,
+			pat: 'smoothstep(0.12, 0.55, max(s.r, s.g * 0.6)) - s.b * 0.75', rawink: routerInk(false, false),
+			uniforms: { uOrtho: 0, uSignal: 0, uLayers: 0, uSpawn: 0.0000005, uAgeRate: 0.00055, uTurn: 0.015, uMaxLen: 60 } }, o);
+	};
+	var ROUTERS = {
+		'router':        ROUTER({ }),
+		'router-ortho':  ROUTER({ uniforms: { uOrtho: 1, uSignal: 0, uLayers: 0, uSpawn: 0.0000005, uAgeRate: 0.00055, uTurn: 0.012, uMaxLen: 60 } }),
+		'router-dense':  ROUTER({ uniforms: { uOrtho: 0, uSignal: 0, uLayers: 0, uSpawn: 0.0000015, uAgeRate: 0.0005, uTurn: 0.02, uMaxLen: 55 } }),
+		'router-sparse': ROUTER({ uniforms: { uOrtho: 0, uSignal: 0, uLayers: 0, uSpawn: 0.0000002, uAgeRate: 0.0005, uTurn: 0.01, uMaxLen: 90 } }),
+		'router-signal': ROUTER({ rawink: routerInk(false, true), uniforms: { uOrtho: 0, uSignal: 1, uLayers: 0, uSpawn: 0.0000005, uAgeRate: 0.0005, uTurn: 0.015, uMaxLen: 60 } }),
+		'router-layers': ROUTER({ rawink: routerInk(true, false), uniforms: { uOrtho: 0, uSignal: 0, uLayers: 1, uSpawn: 0.0000004, uAgeRate: 0.00055, uTurn: 0.015, uMaxLen: 60 } })
+	};
+	var LEGACY = {
 		life:       { step: STEP_LIFE,       float: false, res: 7, cap: 256, tick: 0.3,    steps: 1, warm: 0,   soft: 0.8, pat: 'max(s.r, s.g * 0.8)' },
 		lenia:      { heavy: true, step: STEP_LENIA,      float: true,  res: 3, cap: 512, tick: 1 / 10, steps: 1, warm: 30,  soft: 1.2, pat: 'smoothstep(0.06, 0.7, s.r)' },
 		smoothlife: { heavy: true, step: STEP_SMOOTHLIFE, float: true,  res: 3, cap: 512, tick: 1 / 12, steps: 1, warm: 20,  soft: 1.2, ink: 0.8, pat: 'smoothstep(0.1, 0.8, s.r)' },
@@ -439,8 +557,10 @@
 		crystal:    { step: STEP_CRYSTAL,    float: true,  res: 3, cap: 512, tick: 1 / 20, steps: 1, warm: 0,   soft: 1.0, pat: 's.r * (0.35 + 0.65 * s.g)', full: 0.85 },
 		ink:        { step: STEP_INK,        float: true,  res: 2, cap: 512, tick: 1 / 30, steps: 1, warm: 0,   soft: 1.5, pat: 'smoothstep(0.02, 0.8, s.r)', full: 0.6 }
 	};
+	var legacyOn = /[?&]legacy=1/.test(location.search);
+	var SYSTEMS = legacyOn ? Object.assign({}, ROUTERS, LEGACY) : ROUTERS;
 	var MODES = Object.keys(SYSTEMS);
-	var NAMES = { life: 'Game of Life', lenia: 'Lenia', smoothlife: 'SmoothLife', mnca: 'Multi-neighbourhood CA', rd: 'Reaction–diffusion', cyclic: 'Cyclic automaton', bz: 'Belousov–Zhabotinsky', physarum: 'Physarum', ink: 'Ink flow', bugs: 'Larger than Life', waves: 'Wave field', crystal: 'Crystal growth', flow: 'Flow field', dla: 'Diffusion-limited aggregation' };
+	var NAMES = { 'router': 'Router · 45°', 'router-ortho': 'Router · orthogonal', 'router-dense': 'Router · dense', 'router-sparse': 'Router · sparse', 'router-signal': 'Router · signal', 'router-layers': 'Router · layers', life: 'Game of Life', lenia: 'Lenia', smoothlife: 'SmoothLife', mnca: 'Multi-neighbourhood CA', rd: 'Reaction–diffusion', cyclic: 'Cyclic automaton', bz: 'Belousov–Zhabotinsky', physarum: 'Physarum', ink: 'Ink flow', bugs: 'Larger than Life', waves: 'Wave field', crystal: 'Crystal growth', flow: 'Flow field', dla: 'Diffusion-limited aggregation' };
 
 	function num(v, d) { var n = parseFloat(v); return isNaN(n) ? d : n; }
 	function hexToRgb(h) {
@@ -486,10 +606,10 @@
 
 		var _this = this;
 		this.canvas.addEventListener('webglcontextlost', function (e) { e.preventDefault(); _this.pause(); }, false);
-		this.canvas.addEventListener('webglcontextrestored', function () { _this.quad(); _this.sim = null; _this.initSim(); _this.prog = _this.makeProgram(showShader(_this.sys.pat)); _this.initWarp(); _this.applySettings(); _this.resizeSim(true); _this.resume(); }, false);
+		this.canvas.addEventListener('webglcontextrestored', function () { _this.quad(); _this.sim = null; _this.initSim(); _this.prog = _this.makeProgram(showShader(_this.sys.pat, _this.sys.rawink)); _this.initWarp(); _this.applySettings(); _this.resizeSim(true); _this.resume(); }, false);
 		this.quad();
-		if (!this.initSim()) { this.mode = mode = 'life'; this.sys = SYSTEMS.life; this.initSim(); }
-		this.prog = this.makeProgram(showShader(this.sys.pat));
+		if (!this.initSim()) { this.mode = mode = MODES[0]; this.sys = SYSTEMS[mode]; this.initSim(); }
+		this.prog = this.makeProgram(showShader(this.sys.pat, this.sys.rawink));
 		this.initWarp();
 		this.applySettings();
 		this.bind();
@@ -536,9 +656,10 @@
 		gl.uniform3f(u.uColB, b[0], b[1], b[2]);
 		gl.uniform1f(u.uGrain, s.grain);
 		gl.uniform1f(u.uPaper, s.paper);
-		gl.uniform1f(u.uWarp, s.warp);
+		gl.uniform1f(u.uWarp, s.warp * (this.sys.warp || 1));
 		gl.uniform1f(u.uInk, s.ink * (this.sys.ink || 1));
 		gl.uniform1f(u.uInvert, s.invert ? 1 : 0);
+		gl.uniform1f(u.uMinC, this.sys.minc || 0);
 		gl.uniform1f(u.uLens, s.lens);
 	};
 	Backdrop.prototype.update = function (k, v) { this.settings[k] = v; this.applySettings(); };
@@ -573,12 +694,13 @@
 		try { S.step = this.makeProgram(sys.step); } catch (e) { console.warn('backdrop: shader failed for ' + this.mode, e); return false; }
 		S.clear = this.makeProgram('precision mediump float; void main(){ gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); }');
 		// coverage probe: 32x32 byte target + readback, for the watchdog and the full-sheet flip
-		S.cov = { prog: this.makeProgram(coverageShader(sys.pat)), tex: this.makeTex(gl.UNSIGNED_BYTE, false, true), fbo: gl.createFramebuffer(), px: new Uint8Array(32 * 32 * 4), last: -1, same: 0, at: 0 };
+		S.cov = { prog: this.makeProgram(coverageShader(sys.pat, sys.rawink)), tex: this.makeTex(gl.UNSIGNED_BYTE, false, true), fbo: gl.createFramebuffer(), px: new Uint8Array(32 * 32 * 4), last: -1, same: 0, at: 0 };
 		gl.bindTexture(gl.TEXTURE_2D, S.cov.tex);
 		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 32, 32, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
 		gl.bindFramebuffer(gl.FRAMEBUFFER, S.cov.fbo);
 		gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, S.cov.tex, 0);
 		gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+		if (sys.nearest) linear = false;
 		for (var i = 0; i < 2; i++) { S.tex.push(this.makeTex(type, linear)); S.fbo.push(gl.createFramebuffer()); }
 		if (this.mode === 'lenia') { var sum = 0, R = 9; for (var y = -R; y <= R; y++) for (var x = -R; x <= R; x++) { var r = Math.sqrt(x * x + y * y) / R; if (r > 1) continue; sum += Math.exp(-Math.pow((r - 0.5) / 0.15, 2) * 0.5); } S.ksum = sum; }
 		if (sys.agents) {
@@ -671,6 +793,8 @@
 			gl.uniform1f(p.u.uSeed, seed);
 			if (p.u.uKsum) gl.uniform1f(p.u.uKsum, S.ksum);
 			if (p.u.uFeed) { gl.uniform1f(p.u.uFeed, s.feed); gl.uniform1f(p.u.uKill, s.kill); }
+			if (p.u.uGen) gl.uniform1f(p.u.uGen, S.gen);
+			if (sys.uniforms) for (var k in sys.uniforms) if (p.u[k]) gl.uniform1f(p.u[k], sys.uniforms[k]);
 			gl.bindFramebuffer(gl.FRAMEBUFFER, S.fbo[dst]);
 			gl.activeTexture(gl.TEXTURE0);
 			gl.bindTexture(gl.TEXTURE_2D, S.tex[src]);
@@ -763,8 +887,8 @@
 		this.mode = mode; this.sys = SYSTEMS[mode];
 		this.el.setAttribute('data-backdrop', mode);
 		this.sim = null;
-		if (!this.initSim()) { this.mode = 'life'; this.sys = SYSTEMS.life; this.initSim(); }
-		this.prog = this.makeProgram(showShader(this.sys.pat)); this.applySettings();
+		if (!this.initSim()) { this.mode = MODES[0]; this.sys = SYSTEMS[MODES[0]]; this.initSim(); }
+		this.prog = this.makeProgram(showShader(this.sys.pat, this.sys.rawink)); this.applySettings();
 		this.flipping = false; this.flipT = this.flipState ? 1 : 0;
 		this.resizeSim(true);
 		if (old) { (old.tex || []).concat(old.agentTex || [], old.cov ? [old.cov.tex] : []).forEach(function (t) { gl.deleteTexture(t); }); (old.fbo || []).concat(old.agentFbo || [], old.cov ? [old.cov.fbo] : []).forEach(function (f) { gl.deleteFramebuffer(f); }); }
@@ -772,11 +896,11 @@
 		this.el.dispatchEvent(new CustomEvent('backdropchange', { bubbles: true, detail: { mode: mode } }));
 	};
 	Backdrop.prototype.fallback = function (why) {
-		console.warn('backdrop: ' + this.mode + ' — ' + why + '; falling back to life');
-		if (this.mode === 'life') return;
-		this.mode = 'life'; this.sys = SYSTEMS.life; this.el.setAttribute('data-backdrop', 'life');
+		console.warn('backdrop: ' + this.mode + ' — ' + why + '; falling back to ' + MODES[0]);
+		if (this.mode === MODES[0]) return;
+		this.mode = MODES[0]; this.sys = SYSTEMS[MODES[0]]; this.el.setAttribute('data-backdrop', MODES[0]);
 		this.sim = null; this.initSim();
-		this.prog = this.makeProgram(showShader(this.sys.pat)); this.applySettings();
+		this.prog = this.makeProgram(showShader(this.sys.pat, this.sys.rawink)); this.applySettings();
 		this.resizeSim(true);
 	};
 
