@@ -323,7 +323,7 @@ a.pill:hover { background: rgba(255, 255, 255, 0.34); }
 }
 .system-menu button:hover, .system-menu button:focus-visible { background: rgba(255, 255, 255, 0.4); outline: none; }
 .system-menu button::before { content: ""; width: 0.4em; height: 0.4em; border-radius: 50%; background: currentColor; opacity: 0; flex: 0 0 auto; }
-.system-menu button[aria-selected="true"]::before { opacity: 0.6; }
+.system-menu button[aria-checked="true"]::before { opacity: 0.6; }
 .system-menu .system-key { font-family: var(--sans); font-size: 0.78em; opacity: 0.5; margin-left: auto; padding-left: 1.2em; }
 .mobile .system-label, .mobile .system-sep { display: none; }
 .mobile .bar-bottom .system-menu { left: auto; right: 0; transform: none; grid-template-columns: minmax(13rem, auto); grid-template-rows: none; grid-auto-flow: row; max-height: calc(100dvh - var(--bar-pad) - var(--footer-height, var(--pill-h)) - 1.5rem); overflow: auto; }
@@ -365,7 +365,7 @@ a.pill:hover { background: rgba(255, 255, 255, 0.34); }
 /* 5. Home ------------------------------------------------------------------- */
 .page-home .page-content {
 	min-height: var(--viewport-height);
-	padding: calc(var(--clear-top) + var(--page-pad)) var(--page-pad) calc(var(--clear-bottom) + var(--page-pad));
+	padding: calc(var(--clear-top) + var(--page-pad)) var(--page-pad) calc(max(var(--clear-bottom), var(--footer-height)) + var(--page-pad));
 }
 
 .intro {
@@ -688,7 +688,10 @@ html.lights-off .page-capabilities .page-content { box-shadow: 0 0 5rem 0 rgba(0
 	opacity: 1; transition: opacity 0.9s var(--ease-out);
 }
 .lights-notice[hidden] { display: none; }
-.lights-notice .lights-cta { font-family: var(--sans); font-weight: 200; font-size: 0.6em; color: var(--muted); margin-top: 0.7em; }
+.lights-notice .lights-cta { font-family: var(--sans); font-weight: 300; font-size: max(0.66em, 14px); color: var(--ink); opacity: 0.82; margin-top: 0.7em; }
+.lights-verb::before { content: "click"; }
+.lights-verb { font-size: 0; }
+@media (hover: none) and (pointer: coarse) { .lights-verb::before { content: "tap"; } }
 html.lights-waking .lights-notice { opacity: 0; }
 /* closed: the page is blurred and inert; only the notice is sharp. Everything wakes together on the first click. */
 html.lights-off .page-home .page-content, html.lights-off .bar { filter: blur(10px); opacity: 0.45; pointer-events: none; }
@@ -722,7 +725,7 @@ html.lights-off .panel-nav .back, html.lights-waking .panel-nav .back {
 	position: relative;
 	outline: none;
 	border-radius: 0.9rem;
-	background: color-mix(in srgb, var(--panel) 78%, transparent);
+	background: color-mix(in srgb, var(--panel) 88%, transparent);
 	border: 1px solid rgba(255,255,255,0.55);
 	-webkit-backdrop-filter: blur(22px) saturate(1.3); backdrop-filter: blur(22px) saturate(1.3);
 	box-shadow: inset 0 1px 0 rgba(255,255,255,0.6), 0 1rem 3rem rgba(0,0,0,0.14);

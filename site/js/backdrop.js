@@ -746,7 +746,9 @@
 
 	Backdrop.prototype.draw = function (now) {
 		var _this = this;
-		this.frame = requestAnimationFrame(function (t) { _this.draw(t); });
+		this.drawn = (this.drawn || 0) + 1;
+		var still = this.reducedMotion && this.drawn > 3 && !(this.sim && this.sim.warm > 0);
+		if (!still) this.frame = requestAnimationFrame(function (t) { _this.draw(t); });
 		now = now || performance.now();
 		var dt = this.lastFrame ? Math.min((now - this.lastFrame) / 1000, 0.05) : 0.016;
 		this.lastFrame = now;
@@ -795,7 +797,7 @@
 		gl.uniform1f(u.uTime, this.time);
 		gl.uniform2f(u.uMouse, this.mouse.x, 1 - this.mouse.y);
 		if (u.uEnergy) gl.uniform1f(u.uEnergy, this.energy);
-		gl.uniform1f(u.uLensOn, this.settings.mouse_interaction ? this.lensOn : 0);
+		gl.uniform1f(u.uLensOn, this.settings.mouse_interaction && !this.reducedMotion ? this.lensOn : 0);
 		gl.uniform1f(u.uFlip, this.flipT || 0);
 		gl.uniform1f(u.uGrainTime, this.reducedMotion ? 0 : Math.floor(now / 83));
 		gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, S.tex[S.ping]); gl.uniform1i(u.uState, 0);
@@ -842,7 +844,7 @@
 	var override = params.get('bg') || hashParts[0];
 	var invert = params.get('blend') === 'invert' || hashParts.indexOf('inv') > -1;
 	var qLock = parseFloat(params.get('q'));   // ?q=1 pins the sim resolution (no adaptive fallback)
-	window.addEventListener('hashchange', function () { location.reload(); });
+	window.addEventListener('hashchange', function () { var m = (location.hash || '').slice(1).split('+')[0]; if (m === 'random' || MODES.indexOf(m) > -1) location.reload(); });
 	function pick() {
 		// a different organism each visit, never the same one twice running
 		var last = ''; try { last = localStorage.getItem('om-bg') || ''; } catch (e) {}
@@ -857,6 +859,6 @@
 		if (!mode || mode === 'random' || MODES.indexOf(mode) < 0) mode = pick();
 		els[i].setAttribute('data-backdrop', mode);
 		if (invert) els[i].setAttribute('data-blend', 'invert');
-		try { var inst = new Backdrop(els[i], mode); if (!isNaN(qLock)) { inst.qualityLocked = true; inst.quality = qLock; inst.resizeSim(true); } Backdrop.instances.push(inst); } catch (e) { console.warn('backdrop failed', e); }
+		try { var inst = new Backdrop(els[i], mode); if (!inst.ready) continue; if (!isNaN(qLock)) { inst.qualityLocked = true; inst.quality = qLock; inst.resizeSim(true); } Backdrop.instances.push(inst); } catch (e) { console.warn('backdrop failed', e); }
 	}
 })();

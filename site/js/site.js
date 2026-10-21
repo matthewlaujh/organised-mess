@@ -375,19 +375,34 @@
 			// reset drag offset each time it opens
 			overlay.addEventListener('transitionend', function () {}, { once: true });
 			capsWin.setAttribute('tabindex', '-1');
+			capsWin.setAttribute('role', 'dialog'); capsWin.setAttribute('aria-modal', 'true');
+			var ttl = capsWin.querySelector('.os-title'); if (ttl) { ttl.id = 'caps-title'; capsWin.setAttribute('aria-labelledby', 'caps-title'); }
+			var meta = capsWin.querySelector('.os-meta'); if (meta) meta.setAttribute('aria-hidden', 'true');
+			var behind = [document.querySelector('main'), document.getElementById('header'), document.getElementById('footer')];
 			var origOpen = openOverlay, origClose = closeOverlay, opener = null;
 			openOverlay = function (a, b) {
 				capsWin.style.transform = '';
 				opener = document.activeElement;
 				origOpen(a, b);
+				behind.forEach(function (el) { if (el) el.inert = true; });
 				// keyboard: focus lands in the window so Tab moves through its links; Escape still closes
 				setTimeout(function () { if (!overlay.hidden) capsWin.focus({ preventScroll: true }); }, 60);
 			};
 			closeOverlay = function (a, b) {
 				origClose(a, b);
+				behind.forEach(function (el) { if (el) el.inert = false; });
 				if (opener && opener.focus && document.contains(opener)) opener.focus({ preventScroll: true });
 				opener = null;
 			};
+			// focus trap: Tab cycles within the window
+			capsWin.addEventListener('keydown', function (e) {
+				if (e.key !== 'Tab') return;
+				var f = Array.prototype.filter.call(capsWin.querySelectorAll('a[href], button, [tabindex]:not([tabindex="-1"])'), function (el) { return el.offsetParent !== null; });
+				if (!f.length) return;
+				var first = f[0], last = f[f.length - 1];
+				if (e.shiftKey && (document.activeElement === first || document.activeElement === capsWin)) { e.preventDefault(); last.focus(); }
+				else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+			});
 			open = openOverlay; close = closeOverlay;
 		}
 	}
@@ -462,7 +477,7 @@
 		var compact = html.classList.contains('mobile');
 		var status = isOpen
 			? (compact ? 'Open · Singapore' : 'Studio open · Singapore')
-			: (compact ? 'Closed · ' : 'Studio closed · opens ') + nextOpeningLocal().replace(', your time', '');   // visitor's clock, like the notice
+			: compact ? 'Closed · ' + nextOpeningLocal().replace(', your time', '') : 'Studio closed · opens ' + nextOpeningLocal();   // visitor's clock, like the notice
 		el.querySelector('.studio-state').textContent = status;
 		el.classList.toggle('is-open', isOpen);
 
@@ -508,8 +523,16 @@
 		}
 
 		var events = ['pointerdown', 'keydown', 'wheel', 'touchstart', 'scroll'];
+		var travel = 0, lastX = null, lastY = null;
+		function onMove(e) {
+			if (e.pointerType === 'touch') return;
+			if (lastX !== null) travel += Math.abs(e.clientX - lastX) + Math.abs(e.clientY - lastY);
+			lastX = e.clientX; lastY = e.clientY;
+			if (travel > 12) wake();
+		}
 		function wake() {
 			events.forEach(function (ev) { window.removeEventListener(ev, wake); });
+			window.removeEventListener('pointermove', onMove);
 			html.classList.add('lights-waking');
 			html.classList.remove('lights-off');
 			if (notice) setTimeout(function () { notice.hidden = true; }, 1000);
@@ -520,6 +543,7 @@
 		// let the page settle before listening, so a scroll restore doesn't count
 		setTimeout(function () {
 			events.forEach(function (ev) { window.addEventListener(ev, wake, { passive: true }); });
+			window.addEventListener('pointermove', onMove, { passive: true });   // a mouse moving is enough
 		}, 300);
 	})();
 
@@ -579,7 +603,7 @@
 		var pill = document.getElementById('system-pill');
 		if (!pill || !window.Backdrop) return;
 		var btn = pill.querySelector('.system-btn'), menu = pill.querySelector('.system-menu'), nameEl = pill.querySelector('.system-name');
-		var inst = function () { return window.Backdrop.instances[0]; };
+		var inst = function () { var b = window.Backdrop.instances[0]; return b && b.ready ? b : null; };
 		function render() {
 			if (!inst()) { nameEl.textContent = 'Static'; btn.disabled = true; document.documentElement.classList.add('no-webgl'); return; }
 			document.documentElement.classList.remove('no-webgl'); btn.disabled = false;
@@ -589,15 +613,16 @@
 			window.Backdrop.modes.forEach(function (m) {
 				var li = document.createElement('li');
 				var b = document.createElement('button');
-				b.type = 'button'; b.setAttribute('role', 'option'); b.setAttribute('aria-selected', m === cur ? 'true' : 'false'); b.dataset.mode = m;
-				b.innerHTML = '<span>' + window.Backdrop.names[m] + '</span><span class="system-key">' + m + '</span>';
+				li.setAttribute('role', 'none');
+				b.type = 'button'; b.setAttribute('role', 'menuitemradio'); b.setAttribute('aria-checked', m === cur ? 'true' : 'false'); b.dataset.mode = m;
+				b.innerHTML = '<span>' + window.Backdrop.names[m] + '</span><span class="system-key" aria-hidden="true">' + m + '</span>';
 				li.appendChild(b); menu.appendChild(li);
 			});
 		}
 		function toggle(force) {
 			var open = typeof force === 'boolean' ? force : menu.hidden;
 			menu.hidden = !open; btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-			if (open) { var sel = menu.querySelector('[aria-selected="true"]'); if (sel) sel.focus(); }
+			if (open) { var sel = menu.querySelector('[aria-checked="true"]'); if (sel) sel.focus(); }
 		}
 		render();
 		document.addEventListener('backdropchange', render);
@@ -612,12 +637,14 @@
 		document.addEventListener('keydown', function (e) {
 			if (menu.hidden) return;
 			if (e.key === 'Escape') { toggle(false); btn.focus(); }
+			var items = Array.prototype.slice.call(menu.querySelectorAll('button'));
 			if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
 				e.preventDefault();
-				var items = Array.prototype.slice.call(menu.querySelectorAll('button'));
 				var i = items.indexOf(document.activeElement);
 				items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus();
 			}
+			if (e.key === 'Home') { e.preventDefault(); items[0].focus(); }
+			if (e.key === 'End') { e.preventDefault(); items[items.length - 1].focus(); }
 		});
 		// the backdrop may only be ready after this script; retry once it is
 		if (!inst()) setTimeout(render, 300);

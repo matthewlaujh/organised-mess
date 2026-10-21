@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://organisedmess.studio/sitemap.xml

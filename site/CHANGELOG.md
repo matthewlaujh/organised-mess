@@ -138,3 +138,13 @@ Everything except the copy edits is a token, attribute or one-line switch in `si
 - Keyboard: opening Capabilities moves focus into the window (Tab walks its links), closing returns focus to the link that opened it.
 - Closed state on phones fades the hero further so the notice sits on a clean sheet.
 - Verified: 11 breakpoints, open/close every way, back/forward, resize while open, drag reset, rapid system switching, touch wake, no-WebGL, reduced motion, context loss, 60 s soak (flat heap, no GL errors), open/close spam + switch storm + resize storm, 404 page, production headers/compression/routing.
+
+## QA pass 3 (external report)
+- `/capabilities` deep link: Workers Static Assets can't 200-rewrite from `_redirects`, so `worker.js` now fronts the assets and serves `index.html` at `/capabilities` (URL and query kept). `wrangler.jsonc` gains `main` + `ASSETS` binding.
+- Icons also served at `/favicon.ico` and `/apple-touch-icon.png`; `robots.txt`, `sitemap.xml`, canonical link; `shrink-to-fit` removed; OG image replaced with a 1200×630 frame of physarum, `og:image:width/height` set.
+- After hours: decided in an inline `<head>` script so the dark sheet is the first paint (no light→dark flash); a mouse moving ~12 px wakes the page as well as click/scroll/tap, so overseas desktop visitors are never stuck. Hint is 14px+, weight 300, AA contrast, says "tap" on touch; notice is a `role="status"` live region; status pill keeps "your time" on desktop.
+- Capabilities window: `role="dialog"`, `aria-modal`, labelled by its title; page behind is `inert`; Tab cycles inside; "Index (3)" hidden from screen readers. Glass raised to 88%.
+- System picker: visible-text name (no aria-label), `menu` / `menuitemradio` + `aria-checked`, keys hidden from names, Home/End. No-WebGL instances are no longer registered, so the pill reads "Static".
+- CTA reachable at short heights: home pads to the measured footer and scrolls once the intro hits its floor.
+- `#hash` reloads only for system names; reduced motion draws a few frames then stops the loop, lens off.
+- Copy: rows in Title Case ("About Us", "What We Do"); Product & Tool Development no longer opens with "Custom hardware"; typographic apostrophe on the 404.

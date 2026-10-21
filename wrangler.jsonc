@@ -1,10 +1,12 @@
 {
-	// Cloudflare Workers — static site served from ./site (no Worker code).
-	// _headers and _redirects inside site/ are honoured.
+	// Cloudflare Workers — static site in ./site with a tiny Worker (worker.js)
+	// that serves the Capabilities deep link. _headers in site/ are honoured.
 	"name": "organised-mess-web",
+	"main": "worker.js",
 	"compatibility_date": "2026-10-01",
 	"assets": {
 		"directory": "./site",
+		"binding": "ASSETS",
 		"not_found_handling": "404-page"
 	}
 }
