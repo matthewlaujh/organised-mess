@@ -591,8 +591,8 @@
 		crystal:    { step: STEP_CRYSTAL,    float: true,  res: 3, cap: 512, tick: 1 / 20, steps: 1, warm: 0,   soft: 1.0, pat: 's.r * (0.35 + 0.65 * s.g)', full: 0.85 },
 		ink:        { step: STEP_INK,        float: true,  res: 2, cap: 512, tick: 1 / 30, steps: 1, warm: 0,   soft: 1.5, pat: 'smoothstep(0.02, 0.8, s.r)', full: 0.6 }
 	};
-	var legacyOn = /[?&]legacy=1/.test(location.search);
-	var SYSTEMS = legacyOn ? Object.assign({}, ROUTERS, LEGACY) : ROUTERS;
+	// everything in the pool for now, routers first, so they can be compared side by side
+	var SYSTEMS = Object.assign({}, ROUTERS, LEGACY);
 	var MODES = Object.keys(SYSTEMS);
 	var NAMES = { 'router': 'Router · 45°', 'router-ortho': 'Router · orthogonal', 'router-dense': 'Router · dense', 'router-sparse': 'Router · sparse', 'router-signal': 'Router · signal', 'router-layers': 'Router · layers', life: 'Game of Life', lenia: 'Lenia', smoothlife: 'SmoothLife', mnca: 'Multi-neighbourhood CA', rd: 'Reaction–diffusion', cyclic: 'Cyclic automaton', bz: 'Belousov–Zhabotinsky', physarum: 'Physarum', ink: 'Ink flow', bugs: 'Larger than Life', waves: 'Wave field', crystal: 'Crystal growth', flow: 'Flow field', dla: 'Diffusion-limited aggregation' };
 

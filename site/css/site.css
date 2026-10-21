@@ -307,7 +307,7 @@ a.pill:hover { background: rgba(255, 255, 255, 0.34); }
 .system-menu {
 	position: absolute; left: 50%; bottom: calc(100% + 0.5rem); transform: translateX(-50%); z-index: 2;
 	list-style: none; margin: 0; padding: 0.35rem;
-	display: grid; grid-template-columns: repeat(3, max-content); grid-auto-flow: column; grid-template-rows: repeat(5, auto); column-gap: 0.35rem;
+	display: grid; grid-template-columns: repeat(4, max-content); grid-auto-flow: column; grid-template-rows: repeat(5, auto); column-gap: 0.35rem;
 	overflow: visible;
 	border-radius: 0.9rem;
 	background: color-mix(in srgb, var(--panel) 82%, transparent); border: 1px solid rgba(255, 255, 255, 0.55); color: var(--ink);
@@ -328,10 +328,10 @@ a.pill:hover { background: rgba(255, 255, 255, 0.34); }
 .mobile .system-label, .mobile .system-sep { display: none; }
 .mobile .bar-bottom .system-menu { left: auto; right: 0; transform: none; grid-template-columns: minmax(13rem, auto); grid-template-rows: none; grid-auto-flow: row; max-height: calc(100dvh - var(--bar-pad) - var(--footer-height, var(--pill-h)) - 1.5rem); overflow: auto; }
 @media (max-height: 640px) and (min-width: 560px) {
-	.mobile .bar-bottom .system-menu { grid-template-columns: repeat(2, max-content); grid-template-rows: repeat(7, auto); grid-auto-flow: column; }
+	.mobile .bar-bottom .system-menu { grid-template-columns: repeat(2, max-content); grid-template-rows: repeat(10, auto); grid-auto-flow: column; }
 }
 @media (max-height: 420px) and (min-width: 800px) {
-	.mobile .bar-bottom .system-menu { grid-template-columns: repeat(3, max-content); grid-template-rows: repeat(5, auto); }
+	.mobile .bar-bottom .system-menu { grid-template-columns: repeat(3, max-content); grid-template-rows: repeat(7, auto); }
 }
 
 /* studio clock (inside its pill) */
