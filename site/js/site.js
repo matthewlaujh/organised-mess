@@ -571,10 +571,11 @@
 		var el = document.querySelector('.cursor');
 		if (!el || !window.matchMedia('(hover: hover) and (pointer: fine)').matches) return;
 		var x = -100, y = -100, tx = x, ty = y, raf = null, shown = false;
+		// no smoothing: the ring sits exactly where the pointer is, independent of the render frame rate
 		function tick() {
-			x += (tx - x) * 0.35; y += (ty - y) * 0.35;
+			x = tx; y = ty;
 			el.style.transform = 'translate3d(' + x.toFixed(1) + 'px,' + y.toFixed(1) + 'px,0)';
-			if (Math.abs(tx - x) > 0.1 || Math.abs(ty - y) > 0.1) raf = requestAnimationFrame(tick); else raf = null;
+			raf = null;
 		}
 		function show(cx, cy) { if (!shown) { x = cx; y = cy; shown = true; document.documentElement.classList.add('has-cursor'); } }
 		function hide() { document.documentElement.classList.remove('has-cursor'); shown = false; }
@@ -584,7 +585,7 @@
 			show(tx, ty);
 			var t = e.target && e.target.closest && e.target.closest('a, button, [role="button"], .os-titlebar, .os-dot');
 			el.classList.toggle('is-link', !!t);
-			if (!raf) raf = requestAnimationFrame(tick);
+			tick();
 		}
 		// capture phase + document, so elements that stop propagation (menus, drag handles) can't lose the cursor
 		document.addEventListener('pointermove', move, { capture: true, passive: true });

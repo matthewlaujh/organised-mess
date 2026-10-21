@@ -148,3 +148,7 @@ Everything except the copy edits is a token, attribute or one-line switch in `si
 - CTA reachable at short heights: home pads to the measured footer and scrolls once the intro hits its floor.
 - `#hash` reloads only for system names; reduced motion draws a few frames then stops the loop, lens off.
 - Copy: rows in Title Case ("About Us", "What We Do"); Product & Tool Development no longer opens with "Custom hardware"; typographic apostrophe on the 404.
+
+## Performance: warp pre-pass, direct cursor
+- All the slow noise fields (liquid warp q/r, pools, liquid shade, lens wobble, paper mottle) now render once per frame at quarter resolution into two small textures; the full-resolution pass just samples them. ~16× less noise work per frame — physarum went from ~22 to ~64 fps in the software renderer used for testing. Canvas pixel budget trimmed to 1600×900.
+- Custom cursor is positioned directly on every pointer event (no easing, no dependence on the render frame rate), and the native cursor is hidden on pseudo-elements and scrollbars too, so it can't peek through on heavy frames.

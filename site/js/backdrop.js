@@ -49,10 +49,9 @@
 	// paper + grain, shared by every system. `lum` 0 = colour A (light), 1 = colour B (dark)
 	var FINISH = [
 		'uniform vec3 uColA; uniform vec3 uColB; uniform float uGrain; uniform float uPaper; uniform float uGrainTime;',
-		'vec4 finish(float lum){',
+		'vec4 finish(float lum, float mottle){',
 		'  vec2 fp = gl_FragCoord.xy;',
 		'  float tooth = noise(fp * 0.21 + 3.0) * 0.6 + noise(fp * 0.07 + 9.0) * 0.4;',
-		'  float mottle = fbm(fp * 0.0035 + 3.0);',
 		'  float paper = ((tooth - 0.5) * 0.06 + (mottle - 0.5) * 0.09) * uPaper;',
 		'  vec2 gp = fp * mat2(0.76, 0.65, -0.65, 0.76) + vec2(uGrainTime * 17.3, uGrainTime * 31.7);',
 		'  float grain = (hash(gp) - 0.5) * 0.07 * uGrain;',
@@ -61,22 +60,44 @@
 		'}'
 	].join('\n');
 
+
+	/* ---- warp pre-pass (quarter res): every slow noise field is computed here once per frame ----
+	   A = (r.x, r.y, q.x, q.y)   B = (pools, liquid, lensNoise, mottle)   all 0..1 */
+	var FRAG_WARP_A = ['precision highp float; varying vec2 vUv; uniform vec2 uRes; uniform float uTime;', NOISE,
+		'void main(){',
+		'  vec2 uv = vUv; float aspect = uRes.x / uRes.y;',
+		'  vec2 p = vec2(uv.x * aspect, uv.y) * 1.6; float t = uTime;',
+		'  vec2 q = vec2(fbm(p + t * 0.05), fbm(p + vec2(5.2, 1.3) - t * 0.04));',
+		'  vec2 r = vec2(fbm(p + 2.0 * q + vec2(1.7, 9.2) + t * 0.06), fbm(p + 2.0 * q + vec2(8.3, 2.8) - t * 0.05));',
+		'  gl_FragColor = vec4(r, q);',
+		'}'].join('\n');
+	var FRAG_WARP_B = ['precision highp float; varying vec2 vUv; uniform vec2 uRes; uniform float uTime; uniform vec2 uMouse; uniform float uLens; uniform sampler2D uWarpA;', NOISE,
+		'void main(){',
+		'  vec2 uv = vUv; float aspect = uRes.x / uRes.y;',
+		'  vec2 p = vec2(uv.x * aspect, uv.y) * 1.6; float t = uTime;',
+		'  vec4 a = texture2D(uWarpA, uv); vec2 r = a.xy, q = a.zw;',
+		'  float liquid = fbm(p + 2.2 * r);',
+		'  float pools = smoothstep(0.32, 0.68, fbm(p * 0.55 + r * 0.9 + vec2(t * 0.012, -t * 0.009) + 31.0));',
+		'  vec2 lp = (uv - uMouse) * vec2(aspect, 1.0) + (r - 0.5) * 0.6 * uLens;',
+		'  float lensN = fbm(lp * 6.0 + q * 3.0 + t * 0.2);',
+		'  float mottle = fbm(uv * uRes * 0.0035 + 3.0);',
+		'  gl_FragColor = vec4(pools, liquid, lensN, mottle);',
+		'}'].join('\n');
+
 	/* ---- display: the state texture seen through liquid ------------------ */
 	// each system supplies PAT: a GLSL expression turning the softened sample `s`
 	// (vec4) into ink density 0..1
 	function showShader(pat) {
 		return [
 			'precision highp float; varying vec2 vUv; uniform vec2 uRes; uniform float uTime; uniform vec2 uMouse; uniform float uEnergy;',
-			'uniform sampler2D uState; uniform sampler2D uPrev; uniform float uMix; uniform float uWarp; uniform vec2 uSoft; uniform float uInk; uniform float uInvert; uniform float uLens; uniform float uLensOn; uniform float uFlip;',
+			'uniform sampler2D uState; uniform sampler2D uPrev; uniform float uMix; uniform float uWarp; uniform vec2 uSoft; uniform float uInk; uniform float uInvert; uniform float uLens; uniform float uLensOn; uniform float uFlip; uniform sampler2D uWarpA; uniform sampler2D uWarpB;',
 			NOISE, FINISH,
 			// current and previous generation, crossfaded so steps never pop
 			'vec4 sim(vec2 w){ return mix(texture2D(uPrev, w), texture2D(uState, w), uMix); }',
 			'void main(){',
 			'  vec2 uv = vUv; float aspect = uRes.x / uRes.y;',
-			'  vec2 p = vec2(uv.x * aspect, uv.y) * 1.6;',
-			'  float t = uTime;',
-			'  vec2 q = vec2(fbm(p + t * 0.05), fbm(p + vec2(5.2, 1.3) - t * 0.04));',
-			'  vec2 r = vec2(fbm(p + 2.0 * q + vec2(1.7, 9.2) + t * 0.06), fbm(p + 2.0 * q + vec2(8.3, 2.8) - t * 0.05));',
+			'  vec4 wa = texture2D(uWarpA, uv); vec4 wb = texture2D(uWarpB, uv);',
+			'  vec2 r = wa.xy, q = wa.zw;',
 			'  vec2 w = uv + (r - 0.5) * uWarp + (q - 0.5) * uWarp * 0.5 + (uMouse - 0.5) * 0.03;',
 			// 9-tap soften in sim texels so cells read as ink, not pixels
 			'  vec2 e = uSoft;',
@@ -85,21 +106,20 @@
 			'  s += (sim(w + e) + sim(w - e) + sim(w + vec2(e.x, -e.y)) + sim(w - vec2(e.x, -e.y))) * 0.075;',
 			'  float pat = clamp(' + pat + ', 0.0, 1.0);',
 			'  float base = smoothstep(-0.1, 1.05, 1.0 - uv.y) * 0.75 + 0.05;',
-			'  float liquid = (fbm(p + 2.2 * r) - 0.5) * 0.14;',
+			'  float liquid = (wb.y - 0.5) * 0.14;',
 			// invert mode: the sheet is pools of light and dark that drift, not a top-to-bottom gradient
-			'  float pools = smoothstep(0.32, 0.68, fbm(p * 0.55 + r * 0.9 + vec2(t * 0.012, -t * 0.009) + 31.0));',
+			'  float pools = wb.x;',
 			'  float sheet = uInvert > 0.5 ? mix(0.12, 0.78, pools) + liquid * 0.5 : base + liquid;',
 			// invert: where the organism sits, the sheet flips (dark on the light half, light on the dark half)
 			'  float shade = uInvert > 0.5 ? mix(sheet, 1.0 - sheet, pat) : sheet + pat * uInk;',
-			// pointer lens: a soft disc that inverts whatever is under it, its edge pulled by the liquid
-			// a blob, not a spotlight: the radius itself wobbles with the liquid, and the falloff runs all the way to the centre
+			// pointer lens: a soft blob that inverts what is under it, its edge pulled by the liquid
 			'  vec2 lp = (uv - uMouse) * vec2(aspect, 1.0) + (r - 0.5) * 0.6 * uLens;',
-			'  float rad = uLens * (0.75 + 0.5 * fbm(lp * 6.0 + q * 3.0 + t * 0.2));',
+			'  float rad = uLens * (0.75 + 0.5 * wb.z);',
 			'  float lens = pow(smoothstep(rad, 0.0, length(lp)), 1.6) * 0.9 * uLensOn;',
 			'  shade = mix(shade, 1.0 - shade, lens);',
 			// a full sheet resets by flipping: the page inverts and the organism starts again on the other colour
 			'  shade = mix(shade, 1.0 - shade, uFlip);',
-			'  gl_FragColor = finish(shade);',
+			'  gl_FragColor = finish(shade, wb.w);',
 			'}'
 		].join('\n');
 	}
@@ -466,10 +486,11 @@
 
 		var _this = this;
 		this.canvas.addEventListener('webglcontextlost', function (e) { e.preventDefault(); _this.pause(); }, false);
-		this.canvas.addEventListener('webglcontextrestored', function () { _this.quad(); _this.sim = null; _this.initSim(); _this.prog = _this.makeProgram(showShader(_this.sys.pat)); _this.applySettings(); _this.resizeSim(true); _this.resume(); }, false);
+		this.canvas.addEventListener('webglcontextrestored', function () { _this.quad(); _this.sim = null; _this.initSim(); _this.prog = _this.makeProgram(showShader(_this.sys.pat)); _this.initWarp(); _this.applySettings(); _this.resizeSim(true); _this.resume(); }, false);
 		this.quad();
 		if (!this.initSim()) { this.mode = mode = 'life'; this.sys = SYSTEMS.life; this.initSim(); }
 		this.prog = this.makeProgram(showShader(this.sys.pat));
+		this.initWarp();
 		this.applySettings();
 		this.bind();
 		this.ready = true;
@@ -661,6 +682,39 @@
 		gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 	};
 
+	/* ---- warp pre-pass plumbing ------------------------------------------- */
+	Backdrop.prototype.initWarp = function () {
+		var gl = this.gl;
+		this.warp = { a: this.makeProgram(FRAG_WARP_A), b: this.makeProgram(FRAG_WARP_B), tex: [this.makeTex(gl.UNSIGNED_BYTE, true, true), this.makeTex(gl.UNSIGNED_BYTE, true, true)], fbo: [gl.createFramebuffer(), gl.createFramebuffer()], w: 0, h: 0 };
+	};
+	Backdrop.prototype.resizeWarp = function () {
+		var gl = this.gl, W = this.warp; if (!W) return;
+		var w = Math.max(64, Math.round(this.canvas.width / 4)), h = Math.max(64, Math.round(this.canvas.height / 4));
+		if (W.w === w && W.h === h) return;
+		W.w = w; W.h = h;
+		for (var i = 0; i < 2; i++) {
+			gl.bindTexture(gl.TEXTURE_2D, W.tex[i]);
+			gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+			gl.bindFramebuffer(gl.FRAMEBUFFER, W.fbo[i]);
+			gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, W.tex[i], 0);
+		}
+		gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+	};
+	Backdrop.prototype.drawWarp = function () {
+		var gl = this.gl, W = this.warp;
+		this.resizeWarp();
+		gl.viewport(0, 0, W.w, W.h);
+		this.use(W.a);
+		gl.uniform2f(W.a.u.uRes, this.canvas.width, this.canvas.height); gl.uniform1f(W.a.u.uTime, this.time);
+		gl.bindFramebuffer(gl.FRAMEBUFFER, W.fbo[0]); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+		this.use(W.b);
+		gl.uniform2f(W.b.u.uRes, this.canvas.width, this.canvas.height); gl.uniform1f(W.b.u.uTime, this.time);
+		gl.uniform2f(W.b.u.uMouse, this.mouse.x, 1 - this.mouse.y); gl.uniform1f(W.b.u.uLens, this.settings.lens);
+		gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, W.tex[0]); gl.uniform1i(W.b.u.uWarpA, 0);
+		gl.bindFramebuffer(gl.FRAMEBUFFER, W.fbo[1]); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+		gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+	};
+
 	Backdrop.prototype.coverage = function () {
 		var gl = this.gl, S = this.sim, C = S.cov, p = C.prog;
 		this.use(p);
@@ -729,7 +783,7 @@
 	/* ---- sizing / events --------------------------------------------------- */
 	Backdrop.prototype.setSize = function (width, height) {
 		var res = window.devicePixelRatio || 1;
-		var px = width * res * height * res, hd = 1920 * 1080;
+		var px = width * res * height * res, hd = 1600 * 900;
 		if (px > hd) { var k = Math.sqrt(hd / px); width = Math.ceil(width * k); height = Math.ceil(height * k); }
 		if (this.stage.w !== width || this.stage.h !== height) {
 			this.stage = { w: width, h: height };
@@ -790,9 +844,12 @@
 			this.lowFps = (this.lowFps || 0) + dt;
 			if (this.lowFps > 2.5) { this.degraded = true; this.quality = 0.5; this.resizeSim(true); }
 		} else this.lowFps = 0;
+		this.drawWarp();
 		this.use(this.prog);
 		gl.viewport(0, 0, this.canvas.width, this.canvas.height);
 		var u = this.prog.u;
+		gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.warp.tex[0]); gl.uniform1i(u.uWarpA, 2);
+		gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, this.warp.tex[1]); gl.uniform1i(u.uWarpB, 3);
 		gl.uniform2f(u.uRes, this.canvas.width, this.canvas.height);
 		gl.uniform1f(u.uTime, this.time);
 		gl.uniform2f(u.uMouse, this.mouse.x, 1 - this.mouse.y);

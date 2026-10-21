@@ -777,14 +777,15 @@ body.caps-window .overlay-content.overlay-open.overlay-animating .page-content, 
 /* ============ 12. Cursor ============ */
 /* a small ring in difference blend: readable over the light half, the dark half and the lens. Pointer devices only. */
 @media (hover: hover) and (pointer: fine) {
-	html.has-cursor, html.has-cursor * { cursor: none !important; }
+	html.has-cursor, html.has-cursor *, html.has-cursor *::before, html.has-cursor *::after { cursor: none !important; }
+	html.has-cursor ::-webkit-scrollbar { cursor: none; }
 	.cursor {
 		position: fixed; left: 0; top: 0; z-index: 2147483000; pointer-events: none; isolation: auto;
 		width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%;
 		border: 1px solid #fff; background: transparent;
 		mix-blend-mode: difference;
 		opacity: 0; transition: width .25s ease, height .25s ease, margin .25s ease, opacity .4s ease, background-color .25s ease;
-		will-change: transform;
+		will-change: transform; contain: layout style;
 	}
 	.cursor::after { content: ""; position: absolute; left: 50%; top: 50%; width: 2px; height: 2px; margin: -1px 0 0 -1px; border-radius: 50%; background: #fff; }
 	html.has-cursor .cursor { opacity: 1; }
