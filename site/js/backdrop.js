@@ -90,7 +90,7 @@
 	function showShader(pat, rawink) {
 		return [
 			'precision highp float; varying vec2 vUv; uniform vec2 uRes; uniform float uTime; uniform vec2 uMouse; uniform float uEnergy;',
-			'uniform sampler2D uState; uniform sampler2D uPrev; uniform float uMix; uniform float uWarp; uniform vec2 uSoft; uniform float uInk; uniform float uInvert; uniform float uLens; uniform float uLensOn; uniform float uFlip; uniform float uMinC; uniform sampler2D uWarpA; uniform sampler2D uWarpB;',
+			'uniform sampler2D uState; uniform sampler2D uPrev; uniform float uMix; uniform float uWarp; uniform vec2 uSoft; uniform float uInk; uniform float uInvert; uniform float uLens; uniform float uLensOn; uniform float uFlip; uniform float uMinC; uniform vec2 uCell; uniform float uRing; uniform sampler2D uWarpA; uniform sampler2D uWarpB;',
 			NOISE, FINISH,
 			// current and previous generation, crossfaded so steps never pop
 			rawink || 'vec4 ink(vec4 c){ return c; }',
@@ -105,6 +105,10 @@
 			'  vec4 s = sim(w) * 0.2;',
 			'  s += (sim(w + vec2(e.x, 0.0)) + sim(w - vec2(e.x, 0.0)) + sim(w + vec2(0.0, e.y)) + sim(w - vec2(0.0, e.y))) * 0.125;',
 			'  s += (sim(w + e) + sim(w - e) + sim(w + vec2(e.x, -e.y)) + sim(w - vec2(e.x, -e.y))) * 0.075;',
+			// pads draw as rings: the pad channel dilated one cell, with the centre cell left open
+			'  if (uRing > 0.5) { float ring = 0.0; float c0 = sim(w).a;',
+			'    for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) { if (x == 0 && y == 0) continue; ring = max(ring, sim(w + vec2(float(x), float(y)) * uCell).a * (x * x + y * y > 1 ? 0.55 : 1.0)); }',
+			'    s.r = max(s.r, ring * (1.0 - c0 * 0.85)); }',
 			'  float pat = clamp(' + pat + ', 0.0, 1.0);',
 			'  float base = smoothstep(-0.1, 1.05, 1.0 - uv.y) * 0.75 + 0.05;',
 			'  float liquid = (wb.y - 0.5) * 0.14;',
@@ -427,11 +431,12 @@
 
 	/* ---- Router: our own system. An autorouter that never finishes. --------------
 	   Float texture, per layer a pair of channels: (type + age, dir + travel)
-	     type 0 empty · 1 trace · 2 pad · 3 via · 4 head        age 0..1 (then the cell lifts off)
+	     type 0 empty · 1 trace · 2 pad · 3 via · 4 head · 5 IC keepout · 6 IC outline · 7 IC pin
+	   age 0..1 (then the cell lifts off)
 	     dir 0..7 (E, NE, N, NW, W, SW, S, SE)                    travel 0..1 (head length so far)
 	   Layer 0 lives in RG; layer 1 (uLayers) in BA; the signal variant uses B for the pulse. */
 	var STEP_ROUTER = STEP_HEAD + [
-		'uniform float uGen; uniform float uOrtho; uniform float uSignal; uniform float uLayers; uniform float uSpawn; uniform float uAgeRate; uniform float uTurn; uniform float uMaxLen;',
+		'uniform float uGen; uniform float uOrtho; uniform float uSignal; uniform float uLayers; uniform float uSpawn; uniform float uAgeRate; uniform float uTurn; uniform float uMaxLen; uniform float uIc; uniform float uIcBlock;',
 		// a hash for integer cell ids that stays uniform down to 1e-5 (every intermediate stays small, so fract() keeps its precision)
 		'float hashi(vec2 id, float k){',
 		'  float a = fract(id.x * 0.1031 + 0.17), b = fract(id.y * 0.1031 + 0.31), c = fract(k * 0.0137 + 0.59);',
@@ -459,12 +464,34 @@
 		'    if (x * x <= 1 && y * y <= 1 && dot(d, dv) < 0.01) continue;',   // immediate sides are allowed only at radius 2
 		'    if (typ(Lr(at + d, L)) > 0.5) return false;',
 		'  } return true; }',
+		// ICs: each block of the board may hold one footprint per epoch — a hollow outline with pins on its long sides.
+		// Geometry and timing are hashed from the block id, so every cell can tell on its own whether it is part of one.
+		'vec3 icAt(vec2 id, int L){',
+		'  if (uIc <= 0.0) return vec3(0.0);',
+		'  float BS = uIcBlock; vec2 b = floor(id / BS); float salt = float(L) * 17.0;',
+		'  float E = 0.9 / uAgeRate; float u = (uGen + hashi(b, 71.0 + salt) * E) / E; float e = floor(u); float age = fract(u);',
+		'  if (age > 0.97 || hashi(b, 80.0 + salt + e * 0.37) > uIc) return vec3(0.0);',
+		'  bool vert = hashi(b, 83.0 + salt + e * 0.41) < 0.5;',
+		'  float sw = 7.0 + floor(hashi(b, 85.0 + salt + e * 0.43) * 5.0), lg = 14.0 + floor(hashi(b, 87.0 + salt + e * 0.47) * 13.0);',
+		'  vec2 dim = vert ? vec2(sw, lg) : vec2(lg, sw);',
+		'  vec2 p0 = floor(vec2(4.0) + vec2(hashi(b, 89.0 + salt + e * 0.53), hashi(b, 91.0 + salt + e * 0.59)) * (BS - 8.0 - dim));',
+		'  vec2 l = id - b * BS - p0;',
+		'  if (l.x >= 0.0 && l.y >= 0.0 && l.x < dim.x && l.y < dim.y) {',
+		'    bool edge = l.x < 0.5 || l.y < 0.5 || l.x > dim.x - 1.5 || l.y > dim.y - 1.5;',
+		'    return vec3(edge ? 6.0 : 5.0, age, 0.0);',
+		'  }',
+		// pins: one cell outside each long side, every other cell, pointing outward
+		'  if (vert) { if (l.y >= 1.0 && l.y <= dim.y - 2.0 && mod(l.y - 1.0, 3.0) < 0.5) { if (l.x == -1.0) return vec3(7.0, age, 4.0); if (l.x == dim.x) return vec3(7.0, age, 0.0); } }',
+		'  else { if (l.x >= 1.0 && l.x <= dim.x - 2.0 && mod(l.x - 1.0, 3.0) < 0.5) { if (l.y == -1.0) return vec3(7.0, age, 6.0); if (l.y == dim.y) return vec3(7.0, age, 2.0); } }',
+		'  return vec3(0.0);',
+		'}',
 		'vec2 route(int L){',
 		'  vec2 me = Lr(vec2(0.0), L); float t = typ(me);',
 		'  vec2 id = floor(vUv / uTexel); float salt = float(L) * 17.0;',
+		'  vec3 ic = icAt(id, L); if (ic.x > 0.5) return vec2(ic.x + ic.y, ic.z);',
 		'  if (t > 3.5) {',                                   // head: advance or terminate
 		'    int d = dirOf(me); vec2 o = OFF(d); float tr = travOf(me);',
-		'    if (tr >= 0.95) return vec2(3.0, float(d));',
+		'    if (tr >= 0.95) return vec2(2.001, float(d));',
 		'    if (typ(Lr(o, L)) < 0.5 && clearFwd(o, o, L)) return vec2(1.0, float(d));',
 		// blocked: jog around it (try the two neighbouring directions, random order); give up only when both are blocked
 		'    float stp = uOrtho > 0.5 ? 2.0 : 1.0; float sgn = hashi(id, salt + uGen * 0.53) < 0.5 ? 1.0 : -1.0;',
@@ -494,6 +521,9 @@
 		'  for (int j = 0; j < 4; j++) { int k = j * 2;',
 		'    vec2 o = OFF(k); vec2 n = Lr(o, L);',
 		'    if (typ(n) > 1.5 && typ(n) < 2.5 && ageOf(n) < 0.0001 && clear8(vec2(0.0), o, L) && hashi(id, salt + 9.0) < 0.6) return vec2(4.0, mod(float(k) + 4.0, 8.0));',
+		// a fresh IC pin pointing at me sends a head out (most pins, not all)
+		'    if (typ(n) > 6.5 && dirOf(n) == int(mod(float(k) + 4.0, 8.0))) { float dl = hashi(id, salt + 11.0) * 0.45, ag = ageOf(n), st = uAgeRate / 0.9;',
+		'      if (ag >= dl && ag < dl + st && hashi(id, salt + 12.0) < 0.55) return vec2(4.0, float(dirOf(n)) + 0.1 + hashi(id, salt + 13.0) * 0.6); }',
 		'  }',
 		// a new pad, in open space
 		// pads cluster: a slow drifting field decides where the board is busy and where it is open copper
@@ -510,7 +540,7 @@
 		// pulse: born at pads on a slow clock, runs forward along each trace, dies at the via
 		'    vec4 me = S(vec2(0.0)); float t = typ(me.rg); float pulse = me.b * 0.86;',
 		'    if (t > 0.5 && t < 1.5 || t > 2.5 && t < 3.5) { vec2 behind = -OFF(dirOf(me.rg)); vec4 b = S(behind); if (typ(b.rg) > 0.5 && b.b > 0.55) pulse = 1.0; }',
-		'    if (t > 1.5 && t < 2.5 && mod(uGen, 50.0) < 1.0 && hashi(floor(vUv / uTexel), floor(uGen / 50.0)) < 0.35) pulse = 1.0;',
+		'    if ((t > 1.5 && t < 2.5 || t > 6.5) && mod(uGen, 50.0) < 1.0 && hashi(floor(vUv / uTexel), floor(uGen / 50.0)) < 0.35) pulse = 1.0;',
 		'    r1 = vec2(pulse, 0.0);',
 		'  }',
 		'  gl_FragColor = vec4(r0, r1);',
@@ -518,10 +548,12 @@
 	].join('\n');
 	// raw texel → ink (layer 0, layer 1, pulse): pads and vias bold, traces lighter, everything fading with age
 	function routerInk(layers, signal) {
-		return 'vec4 ink(vec4 c){ float t0 = floor(c.r + 0.001), a0 = c.r - t0; float i0 = t0 > 0.5 ? ((t0 > 1.5 && t0 < 3.5) ? 1.0 : 0.78) * (1.0 - a0 * a0) : 0.0;'
-			+ (layers ? ' float t1 = floor(c.b + 0.001), a1 = c.b - t1; float i1 = t1 > 0.5 ? ((t1 > 1.5 && t1 < 3.5) ? 1.0 : 0.78) * (1.0 - a1 * a1) : 0.0;' : ' float i1 = 0.0;')
+		// weight by type: trace/head 0.7 · pad/via/outline/pin 1.0 · IC body 0.42 (a half-tone slab)
+		return 'float wt(float t){ return t < 0.5 ? 0.0 : (t > 4.5 && t < 5.5) ? 0.42 : (t > 1.5 && t < 3.5 || t > 5.5) ? 1.0 : 0.7; }'
+			+ 'vec4 ink(vec4 c){ float t0 = floor(c.r + 0.001), a0 = c.r - t0; float f0 = 1.0 - a0 * a0; float i0 = wt(t0) * f0; float pd = (t0 > 1.5 && t0 < 2.5) ? f0 : 0.0;'
+			+ (layers ? ' float t1 = floor(c.b + 0.001), a1 = c.b - t1; float f1 = 1.0 - a1 * a1; float i1 = wt(t1) * f1; pd = max(pd, (t1 > 1.5 && t1 < 2.5) ? f1 * 0.6 : 0.0);' : ' float i1 = 0.0;')
 			+ (signal ? ' float pu = c.b;' : ' float pu = 0.0;')
-			+ ' return vec4(i0, i1, pu, 0.0); }';
+			+ ' return vec4(i0, i1, pu, pd); }';
 	}
 
 	/* ---- registry ------------------------------------------------------------ */
@@ -529,17 +561,17 @@
 	// tick: seconds per generation; steps: generations per tick; warm: steps before first frame
 	// soft: soften radius in sim texels; pat: GLSL from sample s → ink
 	var ROUTER = function (o) {
-		return Object.assign({ step: STEP_ROUTER, float: true, nearest: true, res: 5, cap: 384, tick: 1 / 30, steps: 1, warm: 30, soft: 0.45, ink: 0.72, full: 0.5, warp: 0.35, minc: 0.5,
-			pat: 'smoothstep(0.12, 0.55, max(s.r, s.g * 0.6)) - s.b * 0.75', rawink: routerInk(false, false),
-			uniforms: { uOrtho: 0, uSignal: 0, uLayers: 0, uSpawn: 0.0000005, uAgeRate: 0.00055, uTurn: 0.015, uMaxLen: 60 } }, o);
+		return Object.assign({ step: STEP_ROUTER, float: true, nearest: true, res: 5, cap: 384, tick: 1 / 30, steps: 1, warm: 30, soft: 0.45, ink: 0.72, full: 0.5, warp: 0.35, minc: 0.5, ring: true,
+			pat: 'smoothstep(0.1, 0.95, max(s.r, s.g * 0.6)) - s.b * 0.75', rawink: routerInk(false, false),
+			uniforms: { uOrtho: 0, uSignal: 0, uLayers: 0, uSpawn: 0.0000005, uAgeRate: 0.00055, uTurn: 0.015, uMaxLen: 60, uIc: 0.5, uIcBlock: 64 } }, o);
 	};
 	var ROUTERS = {
 		'router':        ROUTER({ }),
-		'router-ortho':  ROUTER({ uniforms: { uOrtho: 1, uSignal: 0, uLayers: 0, uSpawn: 0.0000005, uAgeRate: 0.00055, uTurn: 0.012, uMaxLen: 60 } }),
-		'router-dense':  ROUTER({ uniforms: { uOrtho: 0, uSignal: 0, uLayers: 0, uSpawn: 0.0000015, uAgeRate: 0.0005, uTurn: 0.02, uMaxLen: 55 } }),
-		'router-sparse': ROUTER({ uniforms: { uOrtho: 0, uSignal: 0, uLayers: 0, uSpawn: 0.0000002, uAgeRate: 0.0005, uTurn: 0.01, uMaxLen: 90 } }),
-		'router-signal': ROUTER({ rawink: routerInk(false, true), uniforms: { uOrtho: 0, uSignal: 1, uLayers: 0, uSpawn: 0.0000005, uAgeRate: 0.0005, uTurn: 0.015, uMaxLen: 60 } }),
-		'router-layers': ROUTER({ rawink: routerInk(true, false), uniforms: { uOrtho: 0, uSignal: 0, uLayers: 1, uSpawn: 0.0000004, uAgeRate: 0.00055, uTurn: 0.015, uMaxLen: 60 } })
+		'router-ortho':  ROUTER({ uniforms: { uOrtho: 1, uSignal: 0, uLayers: 0, uSpawn: 0.0000005, uAgeRate: 0.00055, uTurn: 0.012, uMaxLen: 60, uIc: 0.5, uIcBlock: 64 } }),
+		'router-dense':  ROUTER({ uniforms: { uOrtho: 0, uSignal: 0, uLayers: 0, uSpawn: 0.0000015, uAgeRate: 0.0005, uTurn: 0.02, uMaxLen: 55, uIc: 0.6, uIcBlock: 56 } }),
+		'router-sparse': ROUTER({ uniforms: { uOrtho: 0, uSignal: 0, uLayers: 0, uSpawn: 0.0000002, uAgeRate: 0.0005, uTurn: 0.01, uMaxLen: 90, uIc: 0.35, uIcBlock: 80 } }),
+		'router-signal': ROUTER({ rawink: routerInk(false, true), uniforms: { uOrtho: 0, uSignal: 1, uLayers: 0, uSpawn: 0.0000005, uAgeRate: 0.0005, uTurn: 0.015, uMaxLen: 60, uIc: 0.5, uIcBlock: 64 } }),
+		'router-layers': ROUTER({ rawink: routerInk(true, false), uniforms: { uOrtho: 0, uSignal: 0, uLayers: 1, uSpawn: 0.0000004, uAgeRate: 0.00055, uTurn: 0.015, uMaxLen: 60, uIc: 0.5, uIcBlock: 64 } })
 	};
 	var LEGACY = {
 		life:       { step: STEP_LIFE,       float: false, res: 7, cap: 256, tick: 0.3,    steps: 1, warm: 0,   soft: 0.8, pat: 'max(s.r, s.g * 0.8)' },
@@ -660,6 +692,7 @@
 		gl.uniform1f(u.uInk, s.ink * (this.sys.ink || 1));
 		gl.uniform1f(u.uInvert, s.invert ? 1 : 0);
 		gl.uniform1f(u.uMinC, this.sys.minc || 0);
+		gl.uniform1f(u.uRing, this.sys.ring ? 1 : 0);
 		gl.uniform1f(u.uLens, s.lens);
 	};
 	Backdrop.prototype.update = function (k, v) { this.settings[k] = v; this.applySettings(); };
@@ -987,6 +1020,7 @@
 		// with several steps per tick the previous buffer is only one step back; crossfade still smooths it
 		gl.uniform1f(u.uMix, S.warm > 0 ? 1 : Math.min(1, S.acc / sys.tick));
 		gl.uniform2f(u.uSoft, sys.soft / S.size.w, sys.soft / S.size.h);
+		if (u.uCell) gl.uniform2f(u.uCell, 1 / S.size.w, 1 / S.size.h);
 		gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 	};
 
